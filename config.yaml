@@ -1,0 +1,21 @@
+twitch:
+  client_id: ${TWITCH_CLIENT_ID}
+  client_secret: ${TWITCH_CLIENT_SECRET}
+
+discord:
+  system_webhook: ${DISCORD_SYSTEM_WEBHOOK}
+  characters:
+    alice: ${DISCORD_ALICE_WEBHOOK}
+    bob: ${DISCORD_BOB_WEBHOOK}
+
+channels:
+  - login: example_streamer
+    character: alice
+    announce_online: true
+    announce_offline: false
+    template_online: "{display_name} is live with {game}: {title} {url}"
+    template_offline: "{display_name} went offline. {url}"
+  - login: another_streamer
+    announce_online: true
+    announce_offline: false
+    template_online: "Go watch {display_name}! {url}"
