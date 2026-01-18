@@ -5,14 +5,12 @@ twitch:
 discord:
   system_webhook: ${DISCORD_SYSTEM_WEBHOOK}
   characters:
-    loop_trace: ${DISCORD_WEBHOOK_LOOP_TRACE}
-    packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
-    redacted: ${DISCORD_WEBHOOK_REDACTED}
-    aux_proc: ${DISCORD_WEBHOOK_AUX_PROC}
+    alice: ${DISCORD_ALICE_WEBHOOK}
+    bob: ${DISCORD_BOB_WEBHOOK}
 
 channels:
   - login: example_streamer
-    character: loop_trace
+    character: alice
     announce_online: true
     announce_offline: false
     template_online: "{display_name} is live with {game}: {title} {url}"

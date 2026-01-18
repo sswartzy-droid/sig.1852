@@ -75,8 +75,6 @@ async def main() -> None:
             }
 
         broadcaster_ids = [info["id"] for info in channel_info.values()]
-        subscribe_online = any(info["announce_online"] for info in channel_info.values())
-        subscribe_offline = any(info["announce_offline"] for info in channel_info.values())
 
         async def handle_event(event_type: str, event: dict[str, Any]) -> None:
             login = event.get("broadcaster_user_login", "").lower()
@@ -128,8 +126,6 @@ async def main() -> None:
             session=session,
             broadcaster_ids=broadcaster_ids,
             handler=handle_event,
-            subscribe_online=subscribe_online,
-            subscribe_offline=subscribe_offline,
         )
         await eventsub.run_forever()
 

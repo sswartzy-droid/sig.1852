@@ -18,15 +18,11 @@ class TwitchEventSub:
         session: aiohttp.ClientSession,
         broadcaster_ids: list[str],
         handler: EventHandler,
-        subscribe_online: bool = True,
-        subscribe_offline: bool = False,
     ) -> None:
         self.helix = helix
         self.session = session
         self.broadcaster_ids = broadcaster_ids
         self.handler = handler
-        self.subscribe_online = subscribe_online
-        self.subscribe_offline = subscribe_offline
         self.log = logging.getLogger("twitch.eventsub")
 
     async def run_forever(self) -> None:
@@ -68,14 +64,12 @@ class TwitchEventSub:
 
     async def _subscribe_all(self, session_id: str) -> None:
         for broadcaster_id in self.broadcaster_ids:
-            if self.subscribe_online:
-                await self.helix.create_eventsub_subscription(
-                    session_id, broadcaster_id, "stream.online"
-                )
-            if self.subscribe_offline:
-                await self.helix.create_eventsub_subscription(
-                    session_id, broadcaster_id, "stream.offline"
-                )
+            await self.helix.create_eventsub_subscription(
+                session_id, broadcaster_id, "stream.online"
+            )
+            await self.helix.create_eventsub_subscription(
+                session_id, broadcaster_id, "stream.offline"
+            )
 
     async def _reconnect(self, reconnect_url: str) -> None:
         self.log.info("Connecting to reconnect URL.")
