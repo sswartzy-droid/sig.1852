@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any
 
 import aiohttp
@@ -44,6 +45,22 @@ class TwitchHelix:
                     return await retry_resp.json()
             resp.raise_for_status()
             return await resp.json()
+        
+    async def _request_user(self, method: str, url: str, params=None, json=None):
+        token = (os.environ.get("TWITCH_USER_ACCESS_TOKEN") or "").strip()
+        if not token:
+            raise RuntimeError(
+                "Missing TWITCH_USER_ACCESS_TOKEN. "
+                "EventSub WebSocket subscriptions require a USER access token."
+            )
+        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}"}
+        async with self.session.request(method, url, headers=headers, params=params, json=json) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                self.log.error("Helix(user) error %s %s -> HTTP %s body=%s", method, url, resp.status, body)
+            resp.raise_for_status()
+            return await resp.json()
+
 
     async def get_users(self, logins: list[str]) -> dict[str, dict[str, Any]]:
         data = await self._request(
@@ -69,7 +86,7 @@ class TwitchHelix:
             "condition": {"broadcaster_user_id": broadcaster_id},
             "transport": {"method": "websocket", "session_id": session_id},
         }
-        await self._request(
+        await self._request_user(
             "POST", "https://api.twitch.tv/helix/eventsub/subscriptions", json=payload
         )
         self.log.info(

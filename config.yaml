@@ -5,17 +5,25 @@ twitch:
 discord:
   system_webhook: ${DISCORD_SYSTEM_WEBHOOK}
   characters:
-    alice: ${DISCORD_ALICE_WEBHOOK}
-    bob: ${DISCORD_BOB_WEBHOOK}
+    "loop.trace": ${DISCORD_WEBHOOK_LOOP_TRACE}
+    "packet.ghost": ${DISCORD_WEBHOOK_PACKET_GHOST}
+    "[REDACTED]": ${DISCORD_WEBHOOK_REDACTED}
+    "aux.proc": ${DISCORD_WEBHOOK_AUX_PROC}
+
+defaults:
+  announce_online: true
+  announce_offline: false
+  # system webhook for go-lives: do NOT set a default character
+  template_online: |
+    🔴 **{display_name} is LIVE**
+    > {title}
+    {url}
 
 channels:
-  - login: example_streamer
-    character: alice
-    announce_online: true
-    announce_offline: false
-    template_online: "{display_name} is live with {game}: {title} {url}"
-    template_offline: "{display_name} went offline. {url}"
-  - login: another_streamer
-    announce_online: true
-    announce_offline: false
-    template_online: "Go watch {display_name}! {url}"
+  - login: reburve
+  - login: rubyhaven
+  - login: mirasuriel
+  - login: arthice
+  - login: jadobe
+  - login: jessabelle1998
+  - login: reynysunset

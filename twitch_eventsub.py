@@ -63,13 +63,17 @@ class TwitchEventSub:
                     return
 
     async def _subscribe_all(self, session_id: str) -> None:
+        
         for broadcaster_id in self.broadcaster_ids:
-            await self.helix.create_eventsub_subscription(
-                session_id, broadcaster_id, "stream.online"
-            )
-            await self.helix.create_eventsub_subscription(
-                session_id, broadcaster_id, "stream.offline"
-            )
+            try:
+                await self.helix.create_eventsub_subscription(
+        session_id, broadcaster_id, "stream.online"
+    )
+            except Exception:
+    # Error already logged in twitch_helix.py (429, etc.)
+                continue
+
+
 
     async def _reconnect(self, reconnect_url: str) -> None:
         self.log.info("Connecting to reconnect URL.")
