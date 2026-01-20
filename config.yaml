@@ -3,7 +3,7 @@ twitch:
   client_secret: ${TWITCH_CLIENT_SECRET}
 
 discord:
-  system_webhook: ${DISCORD_SYSTEM_WEBHOOK}
+  system_webhook: ${DISCORD_WEBHOOK_SYSTEM}
   characters:
     loop_trace: ${DISCORD_WEBHOOK_LOOP_TRACE}
     packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
@@ -21,13 +21,30 @@ quotes:
   no_mentions: true
 
 channels:
-  - login: example_streamer
-    character: loop_trace
-    announce_online: true
-    announce_offline: false
-    template_online: "{display_name} is live with {game}: {title} {url}"
-    template_offline: "{display_name} went offline. {url}"
-  - login: another_streamer
-    announce_online: true
-    announce_offline: false
-    template_online: "Go watch {display_name}! {url}"
+  - login: reburve
+  - login: rubyhaven
+  - login: mirasuriel
+  - login: arthice
+  - login: jadobe
+  - login: jessabelle1998
+  - login: reynysunset
+
+#Discord comments settings
+
+quotes:
+enabled: true
+quotes_dir: quotes
+daily_min: 1
+daily_max: 3
+window_start: "10:00"
+window_end: "21:00"
+max_sentences: 3
+max_chars: 350
+no_links: true
+no_mentions: true
+files:
+  "loop.trace": "loop.trace.txt"
+  "packet.ghost": "packet.ghost.txt"
+  "[REDACTED]": "redacted.txt"
+  "aux.proc": "aux.proc.txt"
+
