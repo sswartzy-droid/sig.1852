@@ -80,15 +80,26 @@ class TwitchHelix:
     async def create_eventsub_subscription(
         self, session_id: str, broadcaster_id: str, event_type: str
     ) -> None:
+        user_token = os.getenv("TWITCH_USER_ACCESS_TOKEN")
+        if not user_token:
+            raise RuntimeError(
+                "TWITCH_USER_ACCESS_TOKEN is required for WebSocket EventSub subscriptions."
+            )
         payload = {
             "type": event_type,
             "version": "1",
             "condition": {"broadcaster_user_id": broadcaster_id},
             "transport": {"method": "websocket", "session_id": session_id},
         }
-        await self._request_user(
-            "POST", "https://api.twitch.tv/helix/eventsub/subscriptions", json=payload
-        )
+        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {user_token}"}
+        url = "https://api.twitch.tv/helix/eventsub/subscriptions"
+        async with self.session.post(url, headers=headers, json=payload) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                self.log.error(
+                    "EventSub subscription failed status=%s body=%s", resp.status, body
+                )
+                resp.raise_for_status()
         self.log.info(
             "Subscribed to %s for broadcaster_id=%s", event_type, broadcaster_id
         )

@@ -5,19 +5,20 @@ twitch:
 discord:
   system_webhook: ${DISCORD_WEBHOOK_SYSTEM}
   characters:
-    "loop.trace": ${DISCORD_WEBHOOK_LOOP_TRACE}
-    "packet.ghost": ${DISCORD_WEBHOOK_PACKET_GHOST}
-    "[REDACTED]": ${DISCORD_WEBHOOK_REDACTED}
-    "aux.proc": ${DISCORD_WEBHOOK_AUX_PROC}
+    loop_trace: ${DISCORD_WEBHOOK_LOOP_TRACE}
+    packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
+    redacted: ${DISCORD_WEBHOOK_REDACTED}
+    aux_proc: ${DISCORD_WEBHOOK_AUX_PROC}
 
-defaults:
-  announce_online: true
-  announce_offline: false
-  # system webhook for go-lives: do NOT set a default character
-  template_online: |
-    🔴 **{display_name} is LIVE**
-    > {title}
-    {url}
+quotes:
+  enabled: true
+  quotes_dir: quotes
+  daily_min: 1
+  daily_max: 3
+  max_sentences: 3
+  max_chars: 350
+  no_links: true
+  no_mentions: true
 
 channels:
   - login: reburve
