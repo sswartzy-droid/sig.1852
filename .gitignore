@@ -1,2 +1,17 @@
-state.json
+# Python virtual environment
+.venv/
+
+# Environment secrets
 .env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
