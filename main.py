@@ -19,7 +19,9 @@ def load_state() -> dict[str, Any]:
     if STATE_PATH.exists():
         with STATE_PATH.open("r", encoding="utf-8") as handle:
             return json.load(handle)
-    return {}
+    state = {}
+    save_state(state)
+    return state
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -75,6 +77,8 @@ async def main() -> None:
             }
 
         broadcaster_ids = [info["id"] for info in channel_info.values()]
+        subscribe_online = any(info["announce_online"] for info in channel_info.values())
+        subscribe_offline = any(info["announce_offline"] for info in channel_info.values())
 
         async def handle_event(event_type: str, event: dict[str, Any]) -> None:
             login = event.get("broadcaster_user_login", "").lower()
@@ -126,7 +130,21 @@ async def main() -> None:
             session=session,
             broadcaster_ids=broadcaster_ids,
             handler=handle_event,
+            subscribe_online=subscribe_online,
+            subscribe_offline=subscribe_offline,
         )
+        quotes_config = config.raw.get("quotes", {})
+        if quotes_config.get("enabled", False):
+            from quote_drip import QuoteDrip
+
+            quote_drip = QuoteDrip(
+                quotes_config=quotes_config,
+                characters=config.discord.get("characters", {}),
+                webhook=webhook,
+                state=state,
+                save_state=save_state,
+            )
+            asyncio.create_task(quote_drip.run())
         await eventsub.run_forever()
 
 
