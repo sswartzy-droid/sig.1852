@@ -2,6 +2,10 @@ twitch:
   client_id: ${TWITCH_CLIENT_ID}
   client_secret: ${TWITCH_CLIENT_SECRET}
 
+polling:
+  enabled: true
+  interval_seconds: 90
+
 discord:
   system_webhook: ${DISCORD_WEBHOOK_SYSTEM}
   characters:
@@ -47,4 +51,3 @@ files:
   "packet.ghost": "packet.ghost.txt"
   "[REDACTED]": "redacted.txt"
   "aux.proc": "aux.proc.txt"
-
