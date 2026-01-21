@@ -77,6 +77,16 @@ class TwitchHelix:
         streams = data.get("data", [])
         return streams[0] if streams else None
 
+    async def get_streams(self, user_ids: list[str]) -> list[dict[str, Any]]:
+        if not user_ids:
+            return []
+        data = await self._request(
+            "GET",
+            "https://api.twitch.tv/helix/streams",
+            params=[("user_id", user_id) for user_id in user_ids],
+        )
+        return data.get("data", [])
+
     async def create_eventsub_subscription(
         self, session_id: str, broadcaster_id: str, event_type: str
     ) -> None:
