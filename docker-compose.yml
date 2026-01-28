@@ -7,11 +7,17 @@ services:
       TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID}
       TWITCH_CLIENT_SECRET: ${TWITCH_CLIENT_SECRET}
       TWITCH_USER_ACCESS_TOKEN: ${TWITCH_USER_ACCESS_TOKEN}
-      DISCORD_SYSTEM_WEBHOOK: ${DISCORD_SYSTEM_WEBHOOK}
+      DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM}
       DISCORD_WEBHOOK_LOOP_TRACE: ${DISCORD_WEBHOOK_LOOP_TRACE}
       DISCORD_WEBHOOK_PACKET_GHOST: ${DISCORD_WEBHOOK_PACKET_GHOST}
       DISCORD_WEBHOOK_REDACTED: ${DISCORD_WEBHOOK_REDACTED}
       DISCORD_WEBHOOK_AUX_PROC: ${DISCORD_WEBHOOK_AUX_PROC}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./state.json:/app/state.json
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, sys, time; data=json.load(open('/app/data/state.json')); sys.exit(0 if time.time() - data.get('last_poll_at', 0) < 300 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
