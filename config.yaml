@@ -19,10 +19,17 @@ quotes:
   quotes_dir: quotes
   daily_min: 1
   daily_max: 3
+  window_start: "10:00"
+  window_end: "21:00"
   max_sentences: 3
   max_chars: 350
   no_links: true
   no_mentions: true
+  files:
+    "loop.trace": "loop.trace.txt"
+    "packet.ghost": "packet.ghost.txt"
+    "[REDACTED]": "redacted.txt"
+    "aux.proc": "aux.proc.txt"
 
 channels:
   - login: reburve
@@ -32,22 +39,3 @@ channels:
   - login: jadobe
   - login: jessabelle1998
   - login: reynysunset
-
-#Discord comments settings
-
-quotes:
-enabled: true
-quotes_dir: quotes
-daily_min: 1
-daily_max: 3
-window_start: "10:00"
-window_end: "21:00"
-max_sentences: 3
-max_chars: 350
-no_links: true
-no_mentions: true
-files:
-  "loop.trace": "loop.trace.txt"
-  "packet.ghost": "packet.ghost.txt"
-  "[REDACTED]": "redacted.txt"
-  "aux.proc": "aux.proc.txt"

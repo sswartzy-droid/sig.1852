@@ -1,17 +1,22 @@
-# Twitch EventSub Discord Announcer
+# Twitch Stream Discord Announcer
 
-Small always-on Python 3.11 service that monitors Twitch stream online/offline events for a list of channels and posts announcements to Discord via webhooks. It uses Twitch EventSub WebSocket transport (no inbound HTTP server) and is meant to run on a home NUC with Docker.
+Small always-on Python 3.11 service that monitors Twitch streams for a list of channels and posts announcements to Discord via webhooks. It polls the Twitch Helix API on a configurable interval and is meant to run on a home NUC with Docker.
 
 ## Features
 
-- Twitch EventSub WebSocket transport with auto-reconnect and resubscribe.
-- OAuth client credentials flow for app access token.
-- Resolve Twitch login names to user IDs at startup (cached in memory).
-- Announce `stream.online` events to Discord via webhook.
-- Optional `stream.offline` announcements.
-- Multiple “characters” routing to different Discord webhook URLs.
+- Polls Twitch Helix API for live stream status with configurable interval.
+- OAuth client credentials flow for app access token with proactive refresh before expiry.
+- Resolve Twitch login names to user IDs at startup (batched, cached in memory).
+- Announce stream online events to Discord via webhook.
+- Multiple "characters" routing to different Discord webhook URLs.
 - Message templates defined in `config.yaml` (no code edits needed).
-- Optional `state.json` persistence to avoid duplicate notifications on reconnect.
+- `state.json` persistence to avoid duplicate notifications on restart.
+- Graceful shutdown on SIGTERM/SIGINT with state flush.
+- Exponential backoff on consecutive polling failures.
+- Rate-limit-aware Discord webhook sender with capped retries.
+- Random quote drip feature with daily quotas and configurable posting windows.
+- Docker health check based on last successful poll timestamp.
+- Configurable log level via `LOG_LEVEL` environment variable.
 
 ## Setup
 
@@ -30,7 +35,7 @@ Small always-on Python 3.11 service that monitors Twitch stream online/offline e
 
 Edit `config.yaml` to list channels and template messages.
 
-Example template fields:
+Template fields:
 - `{login}`: Twitch login name
 - `{display_name}`: Twitch display name
 - `{url}`: `https://twitch.tv/{login}`
@@ -44,26 +49,32 @@ Environment variables referenced in `config.yaml` are expanded at runtime (e.g. 
 ```bash
 export TWITCH_CLIENT_ID=your_client_id
 export TWITCH_CLIENT_SECRET=your_client_secret
-export DISCORD_SYSTEM_WEBHOOK=https://discord.com/api/webhooks/...
-export DISCORD_ALICE_WEBHOOK=https://discord.com/api/webhooks/...
-export DISCORD_BOB_WEBHOOK=https://discord.com/api/webhooks/...
+export DISCORD_WEBHOOK_SYSTEM=https://discord.com/api/webhooks/...
+export DISCORD_WEBHOOK_LOOP_TRACE=https://discord.com/api/webhooks/...
+# ... other character webhooks
 
 docker compose up -d --build
 ```
 
-The service will connect to EventSub, subscribe to your channels, and post go-live announcements.
+The service will start polling Twitch and post go-live announcements to Discord.
 
 ## Behavior Notes
 
-- `stream.online` events fetch stream title/game data from Helix for message formatting.
-- The service tracks last-known live status in `state.json` to avoid duplicate posts on reconnect.
+- The poller fetches live streams every 90 seconds (configurable via `polling.interval_seconds`).
+- Stream online detection uses the `started_at` timestamp to avoid duplicate posts.
 - If a channel does not specify a `character`, it uses `discord.system_webhook`.
+- Quote posting respects `window_start`/`window_end` hours from config.
+- State is persisted atomically to `data/state.json` to prevent corruption.
+- On consecutive polling failures, the interval increases exponentially (up to 8x).
+- The Docker health check verifies the last successful poll was within the last 5 minutes.
+- Set `LOG_LEVEL` environment variable to `DEBUG`, `INFO`, `WARNING`, or `ERROR`.
 
 ## File Overview
 
-- `main.py`: orchestrator and event handling.
-- `twitch_eventsub.py`: WebSocket connection, subscriptions, event parsing.
-- `twitch_helix.py`: OAuth token, user lookups, stream info.
-- `discord_webhook.py`: webhook send with rate-limit handling.
+- `main.py`: orchestrator, state management, graceful shutdown.
+- `twitch_polling.py`: poll loop, stream change detection, announcements.
+- `twitch_helix.py`: OAuth token (with expiry tracking), user lookups, stream info.
+- `discord_webhook.py`: webhook send with rate-limit and error retry caps.
+- `quote_drip.py`: random quote scheduler with posting windows and content filtering.
 - `config.py`: load `config.yaml`, expand `${ENV_VAR}` values.
-- `state.json`: optional persistence of last-known live status.
+- `data/state.json`: runtime persistence of last-known live status and quote progress.

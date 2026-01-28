@@ -1,9 +1,14 @@
 import asyncio
 import logging
+import time
 from typing import Any, Callable
+
+import aiohttp
 
 from discord_webhook import DiscordWebhook
 from twitch_helix import TwitchHelix
+
+MAX_BACKOFF_MULTIPLIER = 8
 
 
 class Poller:
@@ -25,6 +30,7 @@ class Poller:
         self.log = logging.getLogger("twitch.polling")
         self.channel_info: dict[str, dict[str, Any]] = {}
         self.id_map: dict[str, dict[str, Any]] = {}
+        self._consecutive_failures = 0
 
     async def initialize(self) -> None:
         logins = [channel["login"].lower() for channel in self.config.channels]
@@ -57,7 +63,20 @@ class Poller:
         self._ensure_state_shape()
         while True:
             await self._poll_once()
-            await asyncio.sleep(self.interval_seconds)
+            sleep = self._next_sleep()
+            await asyncio.sleep(sleep)
+
+    def _next_sleep(self) -> float:
+        if self._consecutive_failures <= 0:
+            return self.interval_seconds
+        multiplier = min(2 ** self._consecutive_failures, MAX_BACKOFF_MULTIPLIER)
+        backed_off = self.interval_seconds * multiplier
+        self.log.info(
+            "Backing off: %d consecutive failures, sleeping %ds.",
+            self._consecutive_failures,
+            backed_off,
+        )
+        return backed_off
 
     def _ensure_state_shape(self) -> None:
         self.state.setdefault("last_started_at_announced", {})
@@ -81,8 +100,21 @@ class Poller:
         try:
             streams = await self._fetch_live_streams()
             await self._handle_streams(streams)
+            self._consecutive_failures = 0
+            self.state["last_poll_at"] = time.time()
+            self.save_state(self.state)
+        except aiohttp.ClientError:
+            self._consecutive_failures += 1
+            self.log.exception(
+                "Network error during poll (failure #%d); will retry.",
+                self._consecutive_failures,
+            )
         except Exception:
-            self.log.exception("Polling error; retrying after interval.")
+            self._consecutive_failures += 1
+            self.log.exception(
+                "Unexpected polling error (failure #%d); will retry.",
+                self._consecutive_failures,
+            )
 
     async def _fetch_live_streams(self) -> list[dict[str, Any]]:
         broadcaster_ids = list(self.id_map.keys())
