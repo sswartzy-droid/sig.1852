@@ -4,10 +4,12 @@ import logging
 import os
 import signal
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+from aiohttp import web
 
 from config import load_config
 from discord_webhook import DiscordWebhook
@@ -18,6 +20,9 @@ STATE_DIR = Path(os.getenv("STATE_DIR", "data"))
 STATE_PATH = STATE_DIR / "state.json"
 
 log = logging.getLogger("main")
+
+HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8080"))
+HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "300"))
 
 
 def load_state() -> dict[str, Any]:
@@ -45,6 +50,32 @@ def save_state(state: dict[str, Any]) -> None:
         raise
 
 
+async def _start_health_server(state: dict[str, Any]) -> web.AppRunner:
+    async def _health_handler(request: web.Request) -> web.Response:
+        last_poll = state.get("last_poll_at", 0)
+        age = time.time() - last_poll
+        healthy = age < HEALTH_STALE_SECONDS
+        body = json.dumps({
+            "status": "ok" if healthy else "stale",
+            "last_poll_at": last_poll,
+            "age_seconds": round(age, 1),
+        })
+        return web.Response(
+            status=200 if healthy else 503,
+            text=body,
+            content_type="application/json",
+        )
+
+    app = web.Application()
+    app.router.add_get("/health", _health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
+    await site.start()
+    log.info("Health endpoint listening on port %d", HEALTH_PORT)
+    return runner
+
+
 async def main() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -64,6 +95,8 @@ async def main() -> None:
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
+
+    health_runner = await _start_health_server(state)
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
@@ -114,6 +147,7 @@ async def main() -> None:
             except asyncio.CancelledError:
                 pass
 
+        await health_runner.cleanup()
         save_state(state)
         log.info("Shutdown complete.")
 
