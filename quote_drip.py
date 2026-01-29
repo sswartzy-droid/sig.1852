@@ -77,8 +77,14 @@ class QuoteDrip:
                 self.log.warning("Missing quotes file for character %s", character)
                 continue
             with file_path.open("r", encoding="utf-8") as handle:
-                lines = [line.rstrip("\n") for line in handle]
-            quotes[character] = lines
+                content = handle.read()
+            blocks = [block.strip() for block in re.split(r"\n\s*\n", content)]
+            blocks = [b for b in blocks if b]
+            if blocks:
+                quotes[character] = blocks
+                self.log.info("Loaded %d quotes for %s", len(blocks), character)
+            else:
+                self.log.warning("No quotes found in %s", file_path)
         return quotes
 
     def _ensure_daily_state(self) -> None:
