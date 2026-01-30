@@ -1,5 +1,5 @@
 import logging
-import os
+import time
 from typing import Any
 
 import aiohttp
@@ -12,9 +12,10 @@ class TwitchHelix:
         self.session = session
         self.log = logging.getLogger("twitch.helix")
         self._token: str | None = None
+        self._token_expires_at: float = 0.0
 
     async def get_app_token(self) -> str:
-        if self._token:
+        if self._token and time.monotonic() < self._token_expires_at:
             return self._token
         url = "https://id.twitch.tv/oauth2/token"
         params = {
@@ -26,16 +27,20 @@ class TwitchHelix:
             resp.raise_for_status()
             data = await resp.json()
         self._token = data["access_token"]
-        self.log.info("Obtained app access token.")
+        expires_in = int(data.get("expires_in", 3600))
+        # Refresh 5 minutes before actual expiry
+        self._token_expires_at = time.monotonic() + max(expires_in - 300, 60)
+        self.log.info("Obtained app access token (expires in %ds).", expires_in)
         return self._token
 
-    async def _request(self, method: str, url: str, params: dict[str, Any] | None = None,
+    async def _request(self, method: str, url: str, params: dict[str, Any] | list | None = None,
                        json: dict[str, Any] | None = None) -> dict[str, Any]:
         token = await self.get_app_token()
         headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}"}
         async with self.session.request(method, url, headers=headers, params=params, json=json) as resp:
             if resp.status == 401:
                 self._token = None
+                self._token_expires_at = 0.0
                 token = await self.get_app_token()
                 headers["Authorization"] = f"Bearer {token}"
                 async with self.session.request(
@@ -45,30 +50,19 @@ class TwitchHelix:
                     return await retry_resp.json()
             resp.raise_for_status()
             return await resp.json()
-        
-    async def _request_user(self, method: str, url: str, params=None, json=None):
-        token = (os.environ.get("TWITCH_USER_ACCESS_TOKEN") or "").strip()
-        if not token:
-            raise RuntimeError(
-                "Missing TWITCH_USER_ACCESS_TOKEN. "
-                "EventSub WebSocket subscriptions require a USER access token."
-            )
-        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {token}"}
-        async with self.session.request(method, url, headers=headers, params=params, json=json) as resp:
-            if resp.status >= 400:
-                body = await resp.text()
-                self.log.error("Helix(user) error %s %s -> HTTP %s body=%s", method, url, resp.status, body)
-            resp.raise_for_status()
-            return await resp.json()
-
 
     async def get_users(self, logins: list[str]) -> dict[str, dict[str, Any]]:
-        data = await self._request(
-            "GET",
-            "https://api.twitch.tv/helix/users",
-            params=[("login", login) for login in logins],
-        )
-        return {item["login"].lower(): item for item in data.get("data", [])}
+        result: dict[str, dict[str, Any]] = {}
+        for idx in range(0, len(logins), 100):
+            batch = logins[idx : idx + 100]
+            data = await self._request(
+                "GET",
+                "https://api.twitch.tv/helix/users",
+                params=[("login", login) for login in batch],
+            )
+            for item in data.get("data", []):
+                result[item["login"].lower()] = item
+        return result
 
     async def get_stream(self, user_id: str) -> dict[str, Any] | None:
         data = await self._request(
@@ -77,29 +71,12 @@ class TwitchHelix:
         streams = data.get("data", [])
         return streams[0] if streams else None
 
-    async def create_eventsub_subscription(
-        self, session_id: str, broadcaster_id: str, event_type: str
-    ) -> None:
-        user_token = os.getenv("TWITCH_USER_ACCESS_TOKEN")
-        if not user_token:
-            raise RuntimeError(
-                "TWITCH_USER_ACCESS_TOKEN is required for WebSocket EventSub subscriptions."
-            )
-        payload = {
-            "type": event_type,
-            "version": "1",
-            "condition": {"broadcaster_user_id": broadcaster_id},
-            "transport": {"method": "websocket", "session_id": session_id},
-        }
-        headers = {"Client-ID": self.client_id, "Authorization": f"Bearer {user_token}"}
-        url = "https://api.twitch.tv/helix/eventsub/subscriptions"
-        async with self.session.post(url, headers=headers, json=payload) as resp:
-            if resp.status >= 400:
-                body = await resp.text()
-                self.log.error(
-                    "EventSub subscription failed status=%s body=%s", resp.status, body
-                )
-                resp.raise_for_status()
-        self.log.info(
-            "Subscribed to %s for broadcaster_id=%s", event_type, broadcaster_id
+    async def get_streams(self, user_ids: list[str]) -> list[dict[str, Any]]:
+        if not user_ids:
+            return []
+        data = await self._request(
+            "GET",
+            "https://api.twitch.tv/helix/streams",
+            params=[("user_id", user_id) for user_id in user_ids],
         )
+        return data.get("data", [])

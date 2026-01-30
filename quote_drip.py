@@ -9,6 +9,8 @@ from typing import Callable
 
 from discord_webhook import DiscordWebhook
 
+MAX_DAILY_QUOTES = 3
+
 
 class QuoteDrip:
     def __init__(
@@ -27,7 +29,7 @@ class QuoteDrip:
         self.log = logging.getLogger("quotes")
         self.quotes_dir = Path(quotes_config.get("quotes_dir", "quotes"))
         self.daily_min = int(quotes_config.get("daily_min", 1))
-        self.daily_max = int(quotes_config.get("daily_max", 3))
+        self.daily_max = min(int(quotes_config.get("daily_max", 3)), MAX_DAILY_QUOTES)
         self.max_sentences = int(quotes_config.get("max_sentences", 3))
         self.max_chars = int(quotes_config.get("max_chars", 350))
         self.no_links = bool(quotes_config.get("no_links", True))
@@ -50,9 +52,8 @@ class QuoteDrip:
                     quote_state["next_post_at"] = next_day.timestamp()
                     self.save_state(self.state)
                 else:
-                    posted = await self._post_random_quote()
-                    if posted:
-                        quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
+                    await self._post_random_quote()
+                    quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
                     quote_state["next_post_at"] = self._schedule_next()
                     self.save_state(self.state)
                     next_post_at = quote_state["next_post_at"]
@@ -68,8 +69,14 @@ class QuoteDrip:
                 self.log.warning("Missing quotes file for character %s", character)
                 continue
             with file_path.open("r", encoding="utf-8") as handle:
-                lines = [line.rstrip("\n") for line in handle]
-            quotes[character] = lines
+                content = handle.read()
+            blocks = [block.strip() for block in re.split(r"\n\s*\n", content)]
+            blocks = [b for b in blocks if b]
+            if blocks:
+                quotes[character] = blocks
+                self.log.info("Loaded %d quotes for %s", len(blocks), character)
+            else:
+                self.log.warning("No quotes found in %s", file_path)
         return quotes
 
     def _ensure_daily_state(self) -> None:
@@ -77,7 +84,8 @@ class QuoteDrip:
         today = datetime.now().date().isoformat()
         if quote_state.get("date") != today:
             quote_state["date"] = today
-            quote_state["daily_quota"] = random.randint(self.daily_min, self.daily_max)
+            quota = random.randint(self.daily_min, self.daily_max)
+            quote_state["daily_quota"] = min(quota, MAX_DAILY_QUOTES)
             quote_state["daily_posted"] = 0
             quote_state["next_post_at"] = self._schedule_next()
             quote_state.setdefault("characters", {})
@@ -88,7 +96,7 @@ class QuoteDrip:
         end_of_day = datetime.combine(now.date(), datetime.min.time()) + timedelta(days=1)
         remaining = (end_of_day - now).total_seconds()
         if remaining <= 0:
-            return time.time() + 60
+            return end_of_day.timestamp()
         offset = random.uniform(0, remaining)
         return (now + timedelta(seconds=offset)).timestamp()
 

@@ -1,45 +1,102 @@
 import asyncio
 import json
 import logging
+import os
+import signal
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+from aiohttp import web
 
 from config import load_config
 from discord_webhook import DiscordWebhook
-from twitch_eventsub import TwitchEventSub
 from twitch_helix import TwitchHelix
+from twitch_polling import Poller
 
+STATE_DIR = Path(os.getenv("STATE_DIR", "data"))
+STATE_PATH = STATE_DIR / "state.json"
 
-STATE_PATH = Path("state.json")
+log = logging.getLogger("main")
+
+HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8080"))
+HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "300"))
 
 
 def load_state() -> dict[str, Any]:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     if STATE_PATH.exists():
         with STATE_PATH.open("r", encoding="utf-8") as handle:
             return json.load(handle)
-    state = {}
+    state: dict[str, Any] = {}
     save_state(state)
     return state
 
 
 def save_state(state: dict[str, Any]) -> None:
-    with STATE_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(state, handle, indent=2, sort_keys=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+        os.replace(tmp_path, STATE_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
-def format_message(template: str, **kwargs: Any) -> str:
-    return template.format(**kwargs)
+async def _start_health_server(state: dict[str, Any]) -> web.AppRunner:
+    async def _health_handler(request: web.Request) -> web.Response:
+        last_poll = state.get("last_poll_at", 0)
+        age = time.time() - last_poll
+        healthy = age < HEALTH_STALE_SECONDS
+        body = json.dumps({
+            "status": "ok" if healthy else "stale",
+            "last_poll_at": last_poll,
+            "age_seconds": round(age, 1),
+        })
+        return web.Response(
+            status=200 if healthy else 503,
+            text=body,
+            content_type="application/json",
+        )
+
+    app = web.Application()
+    app.router.add_get("/health", _health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
+    await site.start()
+    log.info("Health endpoint listening on port %d", HEALTH_PORT)
+    return runner
 
 
 async def main() -> None:
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = load_config("config.yaml")
     state = load_state()
+
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        log.info("Shutdown signal received, saving state and exiting...")
+        save_state(state)
+        shutdown_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _signal_handler)
+
+    health_runner = await _start_health_server(state)
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
@@ -47,92 +104,20 @@ async def main() -> None:
         )
         webhook = DiscordWebhook(session)
 
-        logins = [channel["login"].lower() for channel in config.channels]
-        user_map = await helix.get_users(logins)
-        if len(user_map) != len(logins):
-            missing = set(logins) - set(user_map.keys())
-            logging.warning("Missing Twitch users: %s", ", ".join(sorted(missing)))
+        tasks: list[asyncio.Task] = []
 
-        channel_info = {}
-        for channel in config.channels:
-            login = channel["login"].lower()
-            user = user_map.get(login)
-            if not user:
-                continue
-            channel_info[login] = {
-                "id": user["id"],
-                "login": login,
-                "display_name": user.get("display_name", login),
-                "character": channel.get("character"),
-                "announce_online": channel.get("announce_online", True),
-                "announce_offline": channel.get("announce_offline", False),
-                "template_online": channel.get(
-                    "template_online",
-                    "{display_name} is live! {url}",
-                ),
-                "template_offline": channel.get(
-                    "template_offline",
-                    "{display_name} went offline.",
-                ),
-            }
+        polling_config = config.raw.get("polling", {})
+        if polling_config.get("enabled", True):
+            poller = Poller(
+                config=config,
+                helix=helix,
+                webhook=webhook,
+                state=state,
+                save_state=save_state,
+                interval_seconds=int(polling_config.get("interval_seconds", 90)),
+            )
+            tasks.append(asyncio.create_task(poller.run()))
 
-        broadcaster_ids = [info["id"] for info in channel_info.values()]
-        subscribe_online = any(info["announce_online"] for info in channel_info.values())
-        subscribe_offline = any(info["announce_offline"] for info in channel_info.values())
-
-        async def handle_event(event_type: str, event: dict[str, Any]) -> None:
-            login = event.get("broadcaster_user_login", "").lower()
-            info = channel_info.get(login)
-            if not info:
-                return
-
-            last_state = state.get(login, {"live": False})
-            url = f"https://twitch.tv/{login}"
-
-            if event_type == "stream.online":
-                if last_state.get("live"):
-                    logging.info("Ignoring duplicate online event for %s", login)
-                    return
-                if info["announce_online"]:
-                    stream = await helix.get_stream(info["id"])
-                    title = stream.get("title") if stream else ""
-                    game = stream.get("game_name") if stream else ""
-                    message = format_message(
-                        info["template_online"],
-                        login=login,
-                        display_name=info["display_name"],
-                        url=url,
-                        title=title,
-                        game=game,
-                    )
-                    await webhook.send(resolve_webhook(config, info), message)
-                state[login] = {"live": True}
-                save_state(state)
-                logging.info("Marked %s as live.", login)
-            elif event_type == "stream.offline":
-                if not last_state.get("live"):
-                    logging.info("Ignoring duplicate offline event for %s", login)
-                    return
-                if info["announce_offline"]:
-                    message = format_message(
-                        info["template_offline"],
-                        login=login,
-                        display_name=info["display_name"],
-                        url=url,
-                    )
-                    await webhook.send(resolve_webhook(config, info), message)
-                state[login] = {"live": False}
-                save_state(state)
-                logging.info("Marked %s as offline.", login)
-
-        eventsub = TwitchEventSub(
-            helix=helix,
-            session=session,
-            broadcaster_ids=broadcaster_ids,
-            handler=handle_event,
-            subscribe_online=subscribe_online,
-            subscribe_offline=subscribe_offline,
-        )
         quotes_config = config.raw.get("quotes", {})
         if quotes_config.get("enabled", False):
             from quote_drip import QuoteDrip
@@ -144,15 +129,27 @@ async def main() -> None:
                 state=state,
                 save_state=save_state,
             )
-            asyncio.create_task(quote_drip.run())
-        await eventsub.run_forever()
+            tasks.append(asyncio.create_task(quote_drip.run()))
 
+        if not tasks:
+            log.warning("No tasks enabled (polling disabled, quotes disabled).")
+            return
 
-def resolve_webhook(config: Any, info: dict[str, Any]) -> str:
-    character = info.get("character")
-    if character:
-        return config.discord["characters"][character]
-    return config.discord["system_webhook"]
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        done, pending = await asyncio.wait(
+            [*tasks, shutdown_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        await health_runner.cleanup()
+        save_state(state)
+        log.info("Shutdown complete.")
 
 
 if __name__ == "__main__":
