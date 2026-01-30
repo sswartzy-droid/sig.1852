@@ -13,6 +13,7 @@ discord:
     packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
     redacted: ${DISCORD_WEBHOOK_REDACTED}
     aux_proc: ${DISCORD_WEBHOOK_AUX_PROC}
+    core_audit: ${DISCORD_WEBHOOK_CORE_AUDIT}
 
 quotes:
   enabled: true
@@ -28,6 +29,13 @@ quotes:
     packet_ghost: "packet.ghost.txt"
     redacted: "redacted.txt"
     aux_proc: "aux.proc.txt"
+    core_audit: "core.audit.txt"
+  weights:
+    loop_trace: 15
+    packet_ghost: 20
+    redacted: 5
+    aux_proc: 30
+    core_audit: 30
 
 channels:
   - login: reburve

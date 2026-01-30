@@ -34,6 +34,9 @@ class QuoteDrip:
         self.max_chars = int(quotes_config.get("max_chars", 350))
         self.no_links = bool(quotes_config.get("no_links", True))
         self.no_mentions = bool(quotes_config.get("no_mentions", True))
+        self.weights: dict[str, int] = {
+            k: int(v) for k, v in quotes_config.get("weights", {}).items()
+        }
         self.quotes = self._load_quotes()
 
     async def run(self) -> None:
@@ -106,13 +109,27 @@ class QuoteDrip:
         now = datetime.now()
         return datetime.combine(now.date(), datetime.min.time()) + timedelta(days=1)
 
+    def _weighted_character_order(self) -> list[str]:
+        candidates = list(self.quotes.keys())
+        if not candidates:
+            return []
+        weights = [self.weights.get(c, 1) for c in candidates]
+        ordered: list[str] = []
+        remaining_candidates = list(candidates)
+        remaining_weights = list(weights)
+        while remaining_candidates:
+            chosen = random.choices(remaining_candidates, weights=remaining_weights, k=1)[0]
+            ordered.append(chosen)
+            idx = remaining_candidates.index(chosen)
+            remaining_candidates.pop(idx)
+            remaining_weights.pop(idx)
+        return ordered
+
     async def _post_random_quote(self) -> bool:
         quote_state = self.state.setdefault("quotes", {})
         character_state = quote_state.setdefault("characters", {})
-        candidates = list(self.quotes.keys())
-        random.shuffle(candidates)
 
-        for character in candidates:
+        for character in self._weighted_character_order():
             remaining = character_state.setdefault(character, {}).get("remaining_indices")
             if not remaining:
                 remaining = list(range(len(self.quotes[character])))
