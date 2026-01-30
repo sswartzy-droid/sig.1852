@@ -19,8 +19,6 @@ quotes:
   quotes_dir: quotes
   daily_min: 1
   daily_max: 3
-  window_start: "10:00"
-  window_end: "21:00"
   max_sentences: 3
   max_chars: 350
   no_links: true

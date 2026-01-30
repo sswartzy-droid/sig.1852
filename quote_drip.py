@@ -9,6 +9,8 @@ from typing import Callable
 
 from discord_webhook import DiscordWebhook
 
+MAX_DAILY_QUOTES = 3
+
 
 class QuoteDrip:
     def __init__(
@@ -27,21 +29,12 @@ class QuoteDrip:
         self.log = logging.getLogger("quotes")
         self.quotes_dir = Path(quotes_config.get("quotes_dir", "quotes"))
         self.daily_min = int(quotes_config.get("daily_min", 1))
-        self.daily_max = int(quotes_config.get("daily_max", 3))
+        self.daily_max = min(int(quotes_config.get("daily_max", 3)), MAX_DAILY_QUOTES)
         self.max_sentences = int(quotes_config.get("max_sentences", 3))
         self.max_chars = int(quotes_config.get("max_chars", 350))
         self.no_links = bool(quotes_config.get("no_links", True))
         self.no_mentions = bool(quotes_config.get("no_mentions", True))
-        self.window_start = self._parse_time(quotes_config.get("window_start"))
-        self.window_end = self._parse_time(quotes_config.get("window_end"))
         self.quotes = self._load_quotes()
-
-    @staticmethod
-    def _parse_time(value: str | None) -> tuple[int, int] | None:
-        if not value:
-            return None
-        parts = str(value).split(":")
-        return (int(parts[0]), int(parts[1]))
 
     async def run(self) -> None:
         if not self.quotes:
@@ -59,9 +52,8 @@ class QuoteDrip:
                     quote_state["next_post_at"] = next_day.timestamp()
                     self.save_state(self.state)
                 else:
-                    posted = await self._post_random_quote()
-                    if posted:
-                        quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
+                    await self._post_random_quote()
+                    quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
                     quote_state["next_post_at"] = self._schedule_next()
                     self.save_state(self.state)
                     next_post_at = quote_state["next_post_at"]
@@ -92,60 +84,27 @@ class QuoteDrip:
         today = datetime.now().date().isoformat()
         if quote_state.get("date") != today:
             quote_state["date"] = today
-            quote_state["daily_quota"] = random.randint(self.daily_min, self.daily_max)
+            quota = random.randint(self.daily_min, self.daily_max)
+            quote_state["daily_quota"] = min(quota, MAX_DAILY_QUOTES)
             quote_state["daily_posted"] = 0
             quote_state["next_post_at"] = self._schedule_next()
             quote_state.setdefault("characters", {})
             self.save_state(self.state)
 
-    def _window_bounds_today(self) -> tuple[datetime, datetime]:
-        now = datetime.now()
-        if self.window_start and self.window_end:
-            start = now.replace(
-                hour=self.window_start[0], minute=self.window_start[1], second=0, microsecond=0
-            )
-            end = now.replace(
-                hour=self.window_end[0], minute=self.window_end[1], second=0, microsecond=0
-            )
-        else:
-            start = datetime.combine(now.date(), datetime.min.time())
-            end = start + timedelta(days=1)
-        return start, end
-
     def _schedule_next(self) -> float:
         now = datetime.now()
-        start, end = self._window_bounds_today()
-
-        # If we're past the window end, schedule for start of next day's window
-        if now >= end:
-            if self.window_start:
-                tomorrow = now.date() + timedelta(days=1)
-                next_start = datetime.combine(tomorrow, datetime.min.time()).replace(
-                    hour=self.window_start[0], minute=self.window_start[1]
-                )
-                return next_start.timestamp()
-            return (datetime.combine(now.date(), datetime.min.time()) + timedelta(days=1)).timestamp()
-
-        # Clamp to window start if we're before the window
-        earliest = max(now, start)
-        remaining = (end - earliest).total_seconds()
+        end_of_day = datetime.combine(now.date(), datetime.min.time()) + timedelta(days=1)
+        remaining = (end_of_day - now).total_seconds()
         if remaining <= 0:
-            return time.time() + 60
+            return end_of_day.timestamp()
         offset = random.uniform(0, remaining)
-        return (earliest + timedelta(seconds=offset)).timestamp()
+        return (now + timedelta(seconds=offset)).timestamp()
 
     def _start_of_next_day(self) -> datetime:
         now = datetime.now()
         return datetime.combine(now.date(), datetime.min.time()) + timedelta(days=1)
 
     async def _post_random_quote(self) -> bool:
-        # Enforce posting window
-        now = datetime.now()
-        start, end = self._window_bounds_today()
-        if now < start or now >= end:
-            self.log.info("Outside posting window (%s-%s), skipping.", start.time(), end.time())
-            return False
-
         quote_state = self.state.setdefault("quotes", {})
         character_state = quote_state.setdefault("characters", {})
         candidates = list(self.quotes.keys())
