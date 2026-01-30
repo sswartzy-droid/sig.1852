@@ -24,10 +24,10 @@ quotes:
   no_links: true
   no_mentions: true
   files:
-    "loop.trace": "loop.trace.txt"
-    "packet.ghost": "packet.ghost.txt"
-    "[REDACTED]": "redacted.txt"
-    "aux.proc": "aux.proc.txt"
+    loop_trace: "loop.trace.txt"
+    packet_ghost: "packet.ghost.txt"
+    redacted: "redacted.txt"
+    aux_proc: "aux.proc.txt"
 
 channels:
   - login: reburve

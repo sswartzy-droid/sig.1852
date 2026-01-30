@@ -61,10 +61,31 @@ class Poller:
     async def run(self) -> None:
         await self.initialize()
         self._ensure_state_shape()
+        self._config_mtime = self.config.get_mtime()
         while True:
+            await self._check_config_reload()
             await self._poll_once()
             sleep = self._next_sleep()
             await asyncio.sleep(sleep)
+
+    async def _check_config_reload(self) -> None:
+        try:
+            current_mtime = self.config.get_mtime()
+        except OSError:
+            return
+        if current_mtime <= self._config_mtime:
+            return
+        self.log.info("Config file changed, reloading...")
+        try:
+            new_config = self.config.reload()
+            self.config = new_config
+            self.channel_info.clear()
+            self.id_map.clear()
+            await self.initialize()
+            self._config_mtime = current_mtime
+            self.log.info("Config reloaded: %d channels.", len(self.channel_info))
+        except Exception:
+            self.log.exception("Failed to reload config; keeping current.")
 
     def _next_sleep(self) -> float:
         if self._consecutive_failures <= 0:
