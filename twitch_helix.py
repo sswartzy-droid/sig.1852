@@ -64,13 +64,6 @@ class TwitchHelix:
                 result[item["login"].lower()] = item
         return result
 
-    async def get_stream(self, user_id: str) -> dict[str, Any] | None:
-        data = await self._request(
-            "GET", "https://api.twitch.tv/helix/streams", params={"user_id": user_id}
-        )
-        streams = data.get("data", [])
-        return streams[0] if streams else None
-
     async def get_streams(self, user_ids: list[str]) -> list[dict[str, Any]]:
         if not user_ids:
             return []

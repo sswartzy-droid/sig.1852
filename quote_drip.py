@@ -52,8 +52,9 @@ class QuoteDrip:
                     quote_state["next_post_at"] = next_day.timestamp()
                     self.save_state(self.state)
                 else:
-                    await self._post_random_quote()
-                    quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
+                    posted = await self._post_random_quote()
+                    if posted:
+                        quote_state["daily_posted"] = quote_state.get("daily_posted", 0) + 1
                     quote_state["next_post_at"] = self._schedule_next()
                     self.save_state(self.state)
                     next_post_at = quote_state["next_post_at"]
@@ -63,10 +64,11 @@ class QuoteDrip:
 
     def _load_quotes(self) -> dict[str, list[str]]:
         quotes: dict[str, list[str]] = {}
-        for character in self.characters.keys():
-            file_path = self.quotes_dir / f"{character}.txt"
+        files_map = self.quotes_config.get("files", {})
+        for character, filename in files_map.items():
+            file_path = self.quotes_dir / filename
             if not file_path.exists():
-                self.log.warning("Missing quotes file for character %s", character)
+                self.log.warning("Missing quotes file %s for character %s", file_path, character)
                 continue
             with file_path.open("r", encoding="utf-8") as handle:
                 content = handle.read()

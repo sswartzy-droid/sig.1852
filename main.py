@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import signal
 import tempfile
@@ -28,8 +29,11 @@ HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "300"))
 def load_state() -> dict[str, Any]:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if STATE_PATH.exists():
-        with STATE_PATH.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
+        try:
+            with STATE_PATH.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (json.JSONDecodeError, ValueError):
+            log.warning("Corrupted state.json detected; starting with empty state.")
     state: dict[str, Any] = {}
     save_state(state)
     return state
@@ -50,15 +54,26 @@ def save_state(state: dict[str, Any]) -> None:
         raise
 
 
-async def _start_health_server(state: dict[str, Any]) -> web.AppRunner:
+async def _start_health_server(state: dict[str, Any], started_at: float) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
+        now = time.time()
         last_poll = state.get("last_poll_at", 0)
-        age = time.time() - last_poll
-        healthy = age < HEALTH_STALE_SECONDS
+        poll_age = now - last_poll if last_poll else None
+        healthy = poll_age is not None and poll_age < HEALTH_STALE_SECONDS
+
+        quotes = state.get("quotes", {})
+        live_now = state.get("live_now", [])
+
         body = json.dumps({
             "status": "ok" if healthy else "stale",
-            "last_poll_at": last_poll,
-            "age_seconds": round(age, 1),
+            "uptime_seconds": round(now - started_at, 1),
+            "last_poll_at": last_poll or None,
+            "poll_age_seconds": round(poll_age, 1) if poll_age is not None else None,
+            "channels_live": live_now,
+            "channels_live_count": len(live_now),
+            "quotes_today": quotes.get("daily_posted", 0),
+            "quotes_quota": quotes.get("daily_quota", 0),
+            "quotes_next_at": quotes.get("next_post_at"),
         })
         return web.Response(
             status=200 if healthy else 503,
@@ -76,12 +91,47 @@ async def _start_health_server(state: dict[str, Any]) -> web.AppRunner:
     return runner
 
 
-async def main() -> None:
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[1]:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry)
+
+
+def _setup_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    level = getattr(logging, log_level, logging.INFO)
+    log_format = os.getenv("LOG_FORMAT", "text").lower()
+    log_file = os.getenv("LOG_FILE", "")
+
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    if log_format == "json":
+        formatter = _JsonFormatter()
+    else:
+        formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    if log_file:
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+
+
+async def main() -> None:
+    _setup_logging()
     config = load_config("config.yaml")
     state = load_state()
 
@@ -96,7 +146,7 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
-    health_runner = await _start_health_server(state)
+    health_runner = await _start_health_server(state, time.time())
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
