@@ -8,6 +8,10 @@ MAX_RATE_LIMIT_RETRIES = 5
 MAX_ERROR_RETRIES = 3
 
 
+class WebhookSendError(Exception):
+    """Raised when a Discord webhook message fails after all retries."""
+
+
 class DiscordWebhook:
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self.session = session
@@ -25,10 +29,9 @@ class DiscordWebhook:
                 if resp.status == 429:
                     rate_limit_attempts += 1
                     if rate_limit_attempts >= MAX_RATE_LIMIT_RETRIES:
-                        self.log.error(
-                            "Discord rate limited %d times; giving up.", rate_limit_attempts
+                        raise WebhookSendError(
+                            f"Discord rate limited {rate_limit_attempts} times; giving up."
                         )
-                        return
                     data = await resp.json()
                     retry_after = float(
                         resp.headers.get("Retry-After", data.get("retry_after", 1))
@@ -47,5 +50,8 @@ class DiscordWebhook:
                 )
                 error_attempts += 1
                 if error_attempts >= MAX_ERROR_RETRIES:
-                    return
+                    raise WebhookSendError(
+                        f"Discord webhook failed after {error_attempts} attempts "
+                        f"(last status={resp.status})."
+                    )
                 await asyncio.sleep(1)

@@ -4,6 +4,8 @@ from typing import Any
 
 import aiohttp
 
+HELIX_BATCH_SIZE = 100
+
 
 class TwitchHelix:
     def __init__(self, client_id: str, client_secret: str, session: aiohttp.ClientSession) -> None:
@@ -53,8 +55,8 @@ class TwitchHelix:
 
     async def get_users(self, logins: list[str]) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
-        for idx in range(0, len(logins), 100):
-            batch = logins[idx : idx + 100]
+        for idx in range(0, len(logins), HELIX_BATCH_SIZE):
+            batch = logins[idx : idx + HELIX_BATCH_SIZE]
             data = await self._request(
                 "GET",
                 "https://api.twitch.tv/helix/users",
@@ -67,9 +69,13 @@ class TwitchHelix:
     async def get_streams(self, user_ids: list[str]) -> list[dict[str, Any]]:
         if not user_ids:
             return []
-        data = await self._request(
-            "GET",
-            "https://api.twitch.tv/helix/streams",
-            params=[("user_id", user_id) for user_id in user_ids],
-        )
-        return data.get("data", [])
+        results: list[dict[str, Any]] = []
+        for idx in range(0, len(user_ids), HELIX_BATCH_SIZE):
+            batch = user_ids[idx : idx + HELIX_BATCH_SIZE]
+            data = await self._request(
+                "GET",
+                "https://api.twitch.tv/helix/streams",
+                params=[("user_id", uid) for uid in batch],
+            )
+            results.extend(data.get("data", []))
+        return results
