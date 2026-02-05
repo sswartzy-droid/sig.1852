@@ -202,6 +202,8 @@ class QuoteDrip:
         quotes = self.quotes.get(character, [])
         while remaining:
             index = remaining.pop()
+            if index >= len(quotes):
+                continue
             quote = quotes[index].strip()
             if not quote:
                 continue
