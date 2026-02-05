@@ -5,16 +5,24 @@ from typing import Any, Callable
 
 import aiohttp
 
+from config import AppConfig
 from discord_webhook import DiscordWebhook
 from twitch_helix import TwitchHelix
 
 MAX_BACKOFF_MULTIPLIER = 8
 
 
+class _SafeDict(dict):
+    """dict subclass that returns the key as '{key}' for missing lookups."""
+
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"
+
+
 class Poller:
     def __init__(
         self,
-        config: Any,
+        config: AppConfig,
         helix: TwitchHelix,
         webhook: DiscordWebhook,
         state: dict[str, Any],
@@ -84,6 +92,8 @@ class Poller:
             await self.initialize()
             self._config_mtime = current_mtime
             self.log.info("Config reloaded: %d channels.", len(self.channel_info))
+        except ValueError:
+            self.log.exception("Config validation failed on reload; keeping current config.")
         except Exception:
             self.log.exception("Failed to reload config; keeping current.")
 
@@ -101,17 +111,8 @@ class Poller:
 
     def _ensure_state_shape(self) -> None:
         self.state.setdefault("last_started_at_announced", {})
-        live_now = self.state.get("live_now")
-        if live_now is None:
-            legacy_live = [
-                login
-                for login, value in self.state.items()
-                if isinstance(value, dict) and value.get("live") is True
-            ]
-            self.state["live_now"] = legacy_live
-            self.save_state(self.state)
-        elif isinstance(live_now, dict):
-            self.state["live_now"] = [login for login, is_live in live_now.items() if is_live]
+        if self.state.get("live_now") is None:
+            self.state["live_now"] = []
             self.save_state(self.state)
 
     async def _poll_once(self) -> None:
@@ -123,7 +124,6 @@ class Poller:
             await self._handle_streams(streams)
             self._consecutive_failures = 0
             self.state["last_poll_at"] = time.time()
-            self.save_state(self.state)
         except aiohttp.ClientError:
             self._consecutive_failures += 1
             self.log.exception(
@@ -136,6 +136,8 @@ class Poller:
                 "Unexpected polling error (failure #%d); will retry.",
                 self._consecutive_failures,
             )
+        finally:
+            self.save_state(self.state)
 
     async def _fetch_live_streams(self) -> list[dict[str, Any]]:
         broadcaster_ids = list(self.id_map.keys())
@@ -162,7 +164,6 @@ class Poller:
                 last_started[login] = started_at
 
         self.state["live_now"] = sorted(current_live_logins)
-        self.save_state(self.state)
 
     async def _announce_live(self, info: dict[str, Any], stream: dict[str, Any]) -> None:
         if not info.get("announce_online", True):
@@ -177,17 +178,24 @@ class Poller:
             title=stream.get("title", ""),
             game=stream.get("game_name", ""),
         )
+        webhook_url = self._resolve_webhook(info)
         try:
-            await self.webhook.send(self._resolve_webhook(info), message)
+            await self.webhook.send(webhook_url, message)
         except Exception:
             self.log.exception("Failed to send Discord announcement for %s", login)
 
     def _resolve_webhook(self, info: dict[str, Any]) -> str:
         character = info.get("character")
         if character:
-            return self.config.discord["characters"][character]
+            characters = self.config.discord.get("characters", {})
+            webhook = characters.get(character)
+            if webhook:
+                return webhook
+            self.log.warning(
+                "Unknown character '%s'; falling back to system_webhook.", character
+            )
         return self.config.discord["system_webhook"]
 
     @staticmethod
     def _format_message(template: str, **kwargs: Any) -> str:
-        return template.format(**kwargs)
+        return template.format_map(_SafeDict(**kwargs))

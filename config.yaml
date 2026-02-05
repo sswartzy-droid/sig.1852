@@ -25,11 +25,11 @@ quotes:
   no_links: true
   no_mentions: true
   files:
-    loop_trace: "loop.trace.txt"
-    packet_ghost: "packet.ghost.txt"
+    loop_trace: "loop_trace.txt"
+    packet_ghost: "packet_ghost.txt"
     redacted: "redacted.txt"
-    aux_proc: "aux.proc.txt"
-    core_audit: "core.audit.txt"
+    aux_proc: "aux_proc.txt"
+    core_audit: "core_audit.txt"
   weights:
     loop_trace: 15
     packet_ghost: 20

@@ -4,6 +4,32 @@ Tracked list of future enhancements and ideas for sig.1852.
 
 ---
 
+## Recently Implemented
+
+The following items have been addressed in the current codebase:
+
+- **Safe template substitution** — `_SafeDict` prevents format string injection in go-live messages.
+- **Webhook fallback** — Unknown characters fall back to `system_webhook` instead of raising `KeyError`.
+- **Batched API calls** — `get_streams` batches internally (100 per request) matching `get_users`.
+- **Config reload error messages** — `ValueError` from validation is logged separately from generic errors.
+- **Health startup grace period** — Health endpoint reports healthy during startup before first poll completes.
+- **Configurable config path** — `CONFIG_PATH` environment variable (defaults to `config.yaml`).
+- **Single save_state on shutdown** — Removed double save from signal handler.
+- **Cleaned up state migration** — Removed dead legacy migration code from `_ensure_state_shape`.
+- **Quote exhaustion handling** — Quote loop sleeps until next day when all quotes are exhausted instead of spinning.
+- **Health endpoint bind address** — Defaults to `127.0.0.1`; configurable via `HEALTH_HOST`.
+- **Non-root Docker user** — Container runs as unprivileged `app` user.
+- **Reduced save_state calls** — Single save via `finally` block in poll loop.
+- **Weighted character selection** — Uses `random.choices` with configurable weights per character.
+- **Safe env var parsing** — Module-level `int()` calls wrapped in try/except to avoid crashes before logging.
+- **Typed Poller config** — `AppConfig` type instead of `Any`.
+- **Removed deprecated docker-compose version key**.
+- **WebhookSendError** — `DiscordWebhook.send` raises on final failure instead of silently returning.
+- **Standalone `load_quotes`** — Extracted as a top-level function for independent testing.
+- **Filter chain pattern** — Quote filtering uses composable `QuoteFilter` callables.
+
+---
+
 ## Go-Live Notifications
 
 ### Lore-Rich Shoutout Templates
@@ -53,6 +79,9 @@ Expose `{viewers}` from the Helix stream response as a template variable. Low pr
 ---
 
 ## Operational
+
+### Multi-Stage Docker Build
+Use a multi-stage Dockerfile to reduce final image size. First stage installs dependencies, second stage copies only the runtime artifacts. Saves disk on the NUC.
 
 ### Systemd Watchdog Integration
 For non-Docker deployments, integrate with systemd's `WatchdogSec` by notifying systemd on each successful poll cycle. Provides automatic restart if the service hangs.

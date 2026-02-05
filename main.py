@@ -22,8 +22,21 @@ STATE_PATH = STATE_DIR / "state.json"
 
 log = logging.getLogger("main")
 
-HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8080"))
-HEALTH_STALE_SECONDS = int(os.getenv("HEALTH_STALE_SECONDS", "300"))
+
+def _safe_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+HEALTH_PORT = _safe_int_env("HEALTH_PORT", 8080)
+HEALTH_STALE_SECONDS = _safe_int_env("HEALTH_STALE_SECONDS", 300)
+HEALTH_HOST = os.getenv("HEALTH_HOST", "127.0.0.1")
+CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 
 
 def load_state() -> dict[str, Any]:
@@ -57,16 +70,22 @@ def save_state(state: dict[str, Any]) -> None:
 async def _start_health_server(state: dict[str, Any], started_at: float) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
         now = time.time()
+        uptime = now - started_at
         last_poll = state.get("last_poll_at", 0)
         poll_age = now - last_poll if last_poll else None
-        healthy = poll_age is not None and poll_age < HEALTH_STALE_SECONDS
+
+        # Grace period: report healthy during first HEALTH_STALE_SECONDS after start
+        if poll_age is not None:
+            healthy = poll_age < HEALTH_STALE_SECONDS
+        else:
+            healthy = uptime < HEALTH_STALE_SECONDS
 
         quotes = state.get("quotes", {})
         live_now = state.get("live_now", [])
 
         body = json.dumps({
             "status": "ok" if healthy else "stale",
-            "uptime_seconds": round(now - started_at, 1),
+            "uptime_seconds": round(uptime, 1),
             "last_poll_at": last_poll or None,
             "poll_age_seconds": round(poll_age, 1) if poll_age is not None else None,
             "channels_live": live_now,
@@ -85,9 +104,9 @@ async def _start_health_server(state: dict[str, Any], started_at: float) -> web.
     app.router.add_get("/health", _health_handler)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
+    site = web.TCPSite(runner, HEALTH_HOST, HEALTH_PORT)
     await site.start()
-    log.info("Health endpoint listening on port %d", HEALTH_PORT)
+    log.info("Health endpoint listening on %s:%d", HEALTH_HOST, HEALTH_PORT)
     return runner
 
 
@@ -132,15 +151,14 @@ def _setup_logging() -> None:
 
 async def main() -> None:
     _setup_logging()
-    config = load_config("config.yaml")
+    config = load_config(CONFIG_PATH)
     state = load_state()
 
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
 
     def _signal_handler() -> None:
-        log.info("Shutdown signal received, saving state and exiting...")
-        save_state(state)
+        log.info("Shutdown signal received...")
         shutdown_event.set()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
