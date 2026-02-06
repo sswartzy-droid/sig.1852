@@ -27,6 +27,62 @@ The following items have been addressed in the current codebase:
 - **WebhookSendError** — `DiscordWebhook.send` raises on final failure instead of silently returning.
 - **Standalone `load_quotes`** — Extracted as a top-level function for independent testing.
 - **Filter chain pattern** — Quote filtering uses composable `QuoteFilter` callables.
+- **Quote index bounds check** — `_next_valid_quote` validates indices before access, preventing `IndexError` when quote files change.
+- **Root health endpoint** — Added `/` route returning service info and available endpoints.
+
+---
+
+## Code Review Findings
+
+The following items were identified during a thorough code review. Items marked ✅ have been fixed; others remain as future work.
+
+### Bugs Fixed
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Format string injection in `_format_message` via user-controlled template vars | ✅ Fixed — `_SafeDict` returns `{key}` for missing keys |
+| 2 | `_resolve_webhook` raises `KeyError` on unknown character | ✅ Fixed — falls back to `system_webhook` with warning |
+| 3 | `get_streams` doesn't batch internally (unlike `get_users`) | ✅ Fixed — batches 100 IDs per request |
+| 4 | Config reload logs generic "Failed to reload" on validation error | ✅ Fixed — separate `ValueError` catch with specific message |
+| 5 | Health endpoint returns stale before first poll completes | ✅ Fixed — grace period based on uptime |
+| 6 | Hardcoded `config.yaml` path | ✅ Fixed — `CONFIG_PATH` env var |
+| 7 | Double `save_state` on shutdown (signal handler + finally) | ✅ Fixed — removed from signal handler |
+| 8 | Dead `_ensure_state_shape` migration code | ✅ Fixed — removed legacy migration |
+| 9 | `DiscordWebhook.send` silently drops messages on error | Deferred — caller may want control |
+| 10 | Quote loop spins when all quotes exhausted | ✅ Fixed — sets `_exhausted` flag, sleeps until next day |
+| 11 | Health server binds to `0.0.0.0` by default | ✅ Fixed — defaults to `127.0.0.1`, `HEALTH_HOST` configurable |
+| 12 | Missing `__all__` exports in modules | Deferred — low priority |
+| 13 | Docker runs as root | ✅ Fixed — non-root `app` user |
+| 14 | `save_state` called twice per poll cycle | ✅ Fixed — single save via `finally` block |
+| 15 | `_weighted_character_order` is O(n²) | ✅ Fixed — `random.choices` with dedup |
+| 16 | Module-level `int()` on env vars can crash before logging | ✅ Fixed — `_safe_int_env` helper |
+| 17 | `Poller.config` typed as `Any` | ✅ Fixed — typed as `AppConfig` |
+| 18 | No unit tests | Future work |
+| 19 | Deprecated `version` key in docker-compose.yml | ✅ Fixed — removed |
+
+### Opportunities Implemented
+
+| # | Improvement | Status |
+|---|-------------|--------|
+| 13 | `WebhookSendError` exception on final failure | ✅ Implemented |
+| 14 | Standalone `load_quotes()` function for testing | ✅ Implemented |
+| 15 | Composable `QuoteFilter` chain pattern | ✅ Implemented |
+| 16 | Multi-stage Docker build | Deferred — optional optimization |
+
+### Strengths Noted
+
+- Atomic `save_state` via `tempfile.mkstemp` + `os.replace`
+- Config hot-reload with mtime checking
+- Startup validation with aggregated error messages
+- Exponential backoff with ceiling on poll failures
+- Graceful shutdown via `asyncio.Event` and signal handlers
+- Structured JSON logging toggle
+- Rotating file log handler support
+- Batched `get_users` (100 per request)
+- Rate-limit retry cap in Discord webhook
+- Proactive OAuth token refresh before expiry
+- Health endpoint with comprehensive status JSON
+- Weighted random character selection for quotes
 
 ---
 

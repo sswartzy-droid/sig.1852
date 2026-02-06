@@ -100,7 +100,15 @@ async def _start_health_server(state: dict[str, Any], started_at: float) -> web.
             content_type="application/json",
         )
 
+    async def _root_handler(request: web.Request) -> web.Response:
+        return web.Response(
+            status=200,
+            text='{"service": "sig.1852", "endpoints": ["/health"]}',
+            content_type="application/json",
+        )
+
     app = web.Application()
+    app.router.add_get("/", _root_handler)
     app.router.add_get("/health", _health_handler)
     runner = web.AppRunner(app)
     await runner.setup()

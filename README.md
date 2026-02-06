@@ -24,7 +24,12 @@ Small always-on Python 3.11 service that monitors Twitch streams for a list of c
 
 ## Health Endpoint
 
-The service exposes an HTTP health endpoint at `GET /health` for monitoring.
+The service exposes an HTTP health endpoint for monitoring. **This is plain HTTP only (not HTTPS)**.
+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Service info and available endpoints |
+| `GET /health` | Detailed health status |
 
 **Configuration via environment variables:**
 
