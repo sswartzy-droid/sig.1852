@@ -6,6 +6,7 @@ import os
 import signal
 import tempfile
 import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,9 @@ STATE_DIR = Path(os.getenv("STATE_DIR", "data"))
 STATE_PATH = STATE_DIR / "state.json"
 
 log = logging.getLogger("main")
+
+# GMT-6 (Central Standard Time)
+CST = timezone(timedelta(hours=-6))
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -67,7 +71,28 @@ def save_state(state: dict[str, Any]) -> None:
         raise
 
 
-async def _start_health_server(state: dict[str, Any], started_at: float) -> web.AppRunner:
+def _format_duration(seconds: float) -> str:
+    """Format seconds as human-readable duration like '2h 15m' or '45m 30s'."""
+    if seconds < 0:
+        return "now"
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _format_timestamp(ts: float) -> str:
+    """Format Unix timestamp as ISO 8601 in CST (GMT-6)."""
+    dt = datetime.fromtimestamp(ts, tz=CST)
+    return dt.strftime("%Y-%m-%d %H:%M:%S CST")
+
+
+async def _start_health_server(
+    state: dict[str, Any], started_at: float, channel_count: int
+) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
         now = time.time()
         uptime = now - started_at
@@ -82,18 +107,41 @@ async def _start_health_server(state: dict[str, Any], started_at: float) -> web.
 
         quotes = state.get("quotes", {})
         live_now = state.get("live_now", [])
+        last_announced = state.get("last_started_at_announced", {})
+        next_post_ts = quotes.get("next_post_at")
+
+        # Build human-readable time until next quote
+        if next_post_ts:
+            time_until = next_post_ts - now
+            if time_until > 0:
+                next_quote_in = _format_duration(time_until)
+            else:
+                next_quote_in = "pending"
+        else:
+            next_quote_in = None
 
         body = json.dumps({
             "status": "ok" if healthy else "stale",
+            "server_time": _format_timestamp(now),
+            "uptime": _format_duration(uptime),
             "uptime_seconds": round(uptime, 1),
-            "last_poll_at": last_poll or None,
-            "poll_age_seconds": round(poll_age, 1) if poll_age is not None else None,
-            "channels_live": live_now,
-            "channels_live_count": len(live_now),
-            "quotes_today": quotes.get("daily_posted", 0),
-            "quotes_quota": quotes.get("daily_quota", 0),
-            "quotes_next_at": quotes.get("next_post_at"),
-        })
+            "polling": {
+                "last_poll_at": _format_timestamp(last_poll) if last_poll else None,
+                "poll_age": _format_duration(poll_age) if poll_age else None,
+                "poll_age_seconds": round(poll_age, 1) if poll_age is not None else None,
+                "channels_monitored": channel_count,
+                "channels_live": live_now,
+                "channels_live_count": len(live_now),
+                "last_announced": list(last_announced.keys()),
+            },
+            "quotes": {
+                "date": quotes.get("date"),
+                "posted_today": quotes.get("daily_posted", 0),
+                "quota_today": quotes.get("daily_quota", 0),
+                "next_post_at": _format_timestamp(next_post_ts) if next_post_ts else None,
+                "next_post_in": next_quote_in,
+            },
+        }, indent=2)
         return web.Response(
             status=200 if healthy else 503,
             text=body,
@@ -172,7 +220,7 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
-    health_runner = await _start_health_server(state, time.time())
+    health_runner = await _start_health_server(state, time.time(), len(config.channels))
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
