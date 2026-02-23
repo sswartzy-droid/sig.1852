@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -38,6 +39,10 @@ class AppConfig:
     @property
     def channels(self) -> list[dict[str, Any]]:
         return self.raw["channels"]
+
+    @property
+    def twitch_chat(self) -> dict[str, Any]:
+        return self.raw.get("twitch_chat", {})
 
     @property
     def brb(self) -> dict[str, Any]:
@@ -86,9 +91,21 @@ def validate_config(data: dict[str, Any]) -> None:
         raise ValueError("Config validation failed:\n  - " + "\n  - ".join(errors))
 
 
+def _emit_warnings(data: dict[str, Any]) -> None:
+    """Log warnings for optional config sections that are enabled but incomplete."""
+    log = logging.getLogger("config")
+    tc = data.get("twitch_chat", {})
+    if isinstance(tc, dict) and tc.get("enabled", False) and not tc.get("token"):
+        log.warning(
+            "twitch_chat is enabled but TWITCH_CHAT_TOKEN is not set; "
+            "chat integration will not start."
+        )
+
+
 def load_config(path: str) -> AppConfig:
     with open(path, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     expanded = _expand_env(data)
     validate_config(expanded)
+    _emit_warnings(expanded)
     return AppConfig(raw=expanded, config_path=path)

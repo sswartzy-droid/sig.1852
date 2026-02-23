@@ -243,20 +243,55 @@ async def main() -> None:
             tasks.append(asyncio.create_task(poller.run()))
 
         quotes_config = config.raw.get("quotes", {})
-        if quotes_config.get("enabled", False):
-            from quote_drip import QuoteDrip
+        quotes_enabled = quotes_config.get("enabled", False)
+        chat_cfg = config.raw.get("twitch_chat", {})
+        chat_enabled = chat_cfg.get("enabled", False)
 
-            quote_drip = QuoteDrip(
+        # Load quotes once and share the dict across all subsystems that need it.
+        loaded_quotes: dict = {}
+        if quotes_enabled or chat_enabled:
+            from quote_drip import QuoteDrip, load_quotes
+            from pathlib import Path
+
+            if quotes_enabled:
+                quote_drip = QuoteDrip(
+                    quotes_config=quotes_config,
+                    characters=config.discord.get("characters", {}),
+                    webhook=webhook,
+                    state=state,
+                    save_state=save_state,
+                )
+                loaded_quotes = quote_drip.quotes
+                tasks.append(asyncio.create_task(quote_drip.run()))
+            else:
+                # Chat is enabled but quote drip is not — load quotes without scheduling.
+                loaded_quotes = load_quotes(
+                    Path(quotes_config.get("quotes_dir", "quotes")),
+                    quotes_config.get("files", {}),
+                    log,
+                )
+
+        if chat_enabled:
+            from brb_feed import BrbFeed
+            from twitch_chat import TwitchChat
+
+            brb = BrbFeed(
+                brb_config=config.brb,
+                quotes=loaded_quotes,
                 quotes_config=quotes_config,
-                characters=config.discord.get("characters", {}),
-                webhook=webhook,
+            )
+            chat = TwitchChat(
+                config=config,
+                discord_webhook=webhook,
+                quotes=loaded_quotes,
                 state=state,
                 save_state=save_state,
+                brb_feed=brb,
             )
-            tasks.append(asyncio.create_task(quote_drip.run()))
+            tasks.append(asyncio.create_task(chat.run()))
 
         if not tasks:
-            log.warning("No tasks enabled (polling disabled, quotes disabled).")
+            log.warning("No tasks enabled (polling disabled, quotes disabled, chat disabled).")
             return
 
         shutdown_task = asyncio.create_task(shutdown_event.wait())
