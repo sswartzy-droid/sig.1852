@@ -39,6 +39,10 @@ class AppConfig:
     def channels(self) -> list[dict[str, Any]]:
         return self.raw["channels"]
 
+    @property
+    def brb(self) -> dict[str, Any]:
+        return self.raw.get("brb", {})
+
     def get_mtime(self) -> float:
         return os.path.getmtime(self.config_path)
 
@@ -66,6 +70,17 @@ def validate_config(data: dict[str, Any]) -> None:
     channels = data.get("channels")
     if not isinstance(channels, list) or len(channels) == 0:
         errors.append("No channels configured.")
+
+    brb = data.get("brb", {})
+    if isinstance(brb, dict):
+        interval = brb.get("interval_seconds", 15)
+        try:
+            if int(interval) <= 0:
+                errors.append("brb.interval_seconds must be a positive integer.")
+        except (TypeError, ValueError):
+            errors.append("brb.interval_seconds must be a positive integer.")
+        if not brb.get("output_file", "intermission.txt"):
+            errors.append("brb.output_file must be a non-empty string.")
 
     if errors:
         raise ValueError("Config validation failed:\n  - " + "\n  - ".join(errors))

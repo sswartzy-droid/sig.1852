@@ -37,6 +37,11 @@ quotes:
     aux_proc: 30
     core_audit: 30
 
+brb:
+  output_file: intermission.txt
+  interval_seconds: 15
+  recent_quote_buffer: 50
+
 channels:
   - login: reburve
   - login: rubyhaven
