@@ -37,6 +37,16 @@ quotes:
     aux_proc: 30
     core_audit: 30
 
+twitch_chat:
+  enabled: true
+  token: ${TWITCH_CHAT_TOKEN}
+  channel: reburve
+  redeems_dir: redeems
+  redeems:
+    hydration_protocol: hydrate.txt
+    posture_check: posture.txt
+    ama: ama.txt
+
 brb:
   output_file: intermission.txt
   interval_seconds: 15
