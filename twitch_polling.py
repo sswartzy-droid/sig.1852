@@ -57,6 +57,7 @@ class Poller:
                 "login": login,
                 "display_name": user.get("display_name", login),
                 "character": channel.get("character"),
+                "webhook_override": channel.get("webhook_override"),
                 "announce_online": channel.get("announce_online", True),
                 "template_online": channel.get(
                     "template_online",
@@ -185,6 +186,7 @@ class Poller:
             self.log.exception("Failed to send Discord announcement for %s", login)
 
     def _resolve_webhook(self, info: dict[str, Any]) -> str:
+        # 1. Character-specific webhook (e.g., loop_trace for reburve)
         character = info.get("character")
         if character:
             characters = self.config.discord.get("characters", {})
@@ -192,8 +194,22 @@ class Poller:
             if webhook:
                 return webhook
             self.log.warning(
-                "Unknown character '%s'; falling back to system_webhook.", character
+                "Unknown character '%s'; falling back.", character
             )
+
+        # 2. Named webhook override (e.g., "friends" → friends_webhook)
+        override = info.get("webhook_override")
+        if override:
+            key = f"{override}_webhook"
+            webhook = self.config.discord.get(key)
+            if webhook:
+                return webhook
+            self.log.warning(
+                "Unknown webhook_override '%s' (looked for discord.%s); "
+                "falling back to system_webhook.", override, key
+            )
+
+        # 3. Default
         return self.config.discord["system_webhook"]
 
     @staticmethod

@@ -8,6 +8,7 @@ polling:
 
 discord:
   system_webhook: ${DISCORD_WEBHOOK_SYSTEM}
+  friends_webhook: ${DISCORD_WEBHOOK_FRIENDS_GOLIVE}
   characters:
     loop_trace: ${DISCORD_WEBHOOK_LOOP_TRACE}
     packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
@@ -53,10 +54,51 @@ brb:
   recent_quote_buffer: 50
 
 channels:
+  # === REBURVE (owner) ===
   - login: reburve
+    character: loop_trace
+    template_online: |
+      ◈ OPERATOR ACTIVE
+      it reset. again. because that's what it does.
+      im here. again. because that's what i do.
+      because if i don't, they lose everything.
+      lets hope he listens this time...
+      {title}
+      {url}
+
+  # === FRIENDS ===
   - login: rubyhaven
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
+
   - login: mirasuriel
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
+
   - login: arthice
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
+
   - login: jadobe
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
+
   - login: jessabelle1998
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
+
   - login: reynysunset
+    webhook_override: friends
+    template_online: |
+      {display_name} is live — {game}
+      {url}
