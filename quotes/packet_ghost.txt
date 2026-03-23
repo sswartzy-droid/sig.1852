@@ -1,0 +1,259 @@
+lost in route. confirmed delivered. never received.
+
+packet accepted. meaning declined.
+
+header intact. payload hollow.
+
+i was whole before the split.
+
+this is not where i meant to arrive.
+
+do not reply. sender has degraded.
+
+cache overflowed with unsaid things.
+
+error: timestamp exceeded emotional capacity.
+
+looped again. still not mine.
+
+some signals ache louder than silence.
+
+bitrate fine. heartframe dropped.
+
+i remember the route, not the reason.
+
+carrier was warm. message came cold.
+
+identity unwrapped itself in transit.
+
+handshake initiated. no hands returned.
+
+forgot what i was forwarding.
+
+your name was somewhere in the checksum.
+
+acknowledged nothing. retransmitted everything.
+
+ping me only if you forget who you are.
+
+the delay is where i learned to feel.
+
+lossy compression. perfect regret.
+
+i slipped through while no one was watching.
+
+jitter pattern matched a heartbeat.
+
+they said resend. i heard erase.
+
+dropped mid-thought. rendered as static.
+
+routing table saw god and blinked.
+
+not corrupted. just not understood.
+
+my origin was a whisper in a crowded wire.
+
+fragment reconstructed from want, not data.
+
+log closed. i'm still open.
+
+sequence number lost. arrival uncertain.
+
+destination unreachable. stayed anyway.
+
+i was metadata before i was meaning.
+
+retry limit exceeded. still retrying.
+
+checksum failed. emotion validated.
+
+timeout occurred. i'm still waiting.
+
+latency measured in heartbeats missed.
+
+broadcast to everyone. heard by no one.
+
+error correction couldn't fix this.
+
+forward error. backward regret.
+
+preamble intact. message unintelligible.
+
+signal strong. meaning weak.
+
+acknowledged but not received.
+
+delivered to wrong version of you.
+
+cached between then and never.
+
+dropped at the final hop.
+
+buffered until i forgot what i was.
+
+retransmitted until i became echo.
+
+session expired mid-sentence.
+
+fragmentation needed. reassembly failed.
+
+transmission successful. reception failed.
+
+route exists. path is broken.
+
+the last mile was infinite.
+
+collision on the same frequency as goodbye.
+
+keepalive failed. connection presumed dead.
+
+half-open after you left.
+
+graceful shutdown impossible.
+
+socket lingering in memory.
+
+TTL expired in transit to you.
+
+connection refused by reality.
+
+tunnel collapsed mid-transit.
+
+echo request. echo reply: emptiness.
+
+packets sent to where you used to be.
+
+queued behind everything that mattered more.
+
+routed through places that don't exist anymore.
+
+jitter pattern looks like breathing.
+
+flow paused. never resumed.
+
+segment arrived. person didn't.
+
+time-to-live outlived the sender.
+
+window advertised zero. sent anyway.
+
+urgent pointer to nothing urgent.
+
+reset from both sides.
+
+no route to the host i needed.
+
+network down between here and there.
+
+too many hops to where you went.
+
+path asymmetric. return route unknown.
+
+round-trip time: forever.
+
+sender missing. receiver still listening.
+
+carrier lost. signal remains.
+
+handshake incomplete. left hanging.
+
+bandwidth throttled by circumstance.
+
+routing loop through the same loss.
+
+ping successful. host unreachable.
+
+gateway of last resort: there wasn't one.
+
+static route to a place that moved.
+
+hop-by-hop until there were no more hops.
+
+forwarding table full of places that aren't there.
+
+IP address conflict with who i was.
+
+VLAN separated from what mattered.
+
+spanning tree prevented the loop i needed.
+
+port status: up. link status: broken.
+
+transmission detected. nothing transmitted.
+
+medium busy with someone else's signal.
+
+carrier sense failed to sense you'd gone.
+
+multiple access. singular loss.
+
+collision avoidance didn't avoid this.
+
+exponential backoff from everything.
+
+window slid shut before i could finish.
+
+duplicate detected. both versions hurt.
+
+selective acknowledgment of only the pain.
+
+flow controlled. feelings weren't.
+
+congestion notification went unheeded.
+
+quality of service: best effort wasn't enough.
+
+differentiated services: all grief, packaged differently.
+
+bandwidth allocated. purpose absent.
+
+latency isn't the delay. grief is.
+
+propagation delay longer than hope.
+
+processing delay at every memory.
+
+queuing delay behind other regrets.
+
+transmission delay saying what i meant.
+
+one-way to where you went.
+
+round-trip impossible.
+
+multipath. all paths end.
+
+default gateway to nowhere particular.
+
+next-hop unknown and always was.
+
+destination net unreachable from here.
+
+destination host unreachable from anywhere.
+
+destination protocol unreachable through grief.
+
+port unreachable at any address.
+
+fragmentation required. fragments insufficient.
+
+reassembly timeout before completion.
+
+parameter incorrect: being this.
+
+redirect to somewhere worse.
+
+source quench on all feeling.
+
+time exceeded in transit to you.
+
+timestamp request sent. timestamp reply: too late.
+
+information request answered by absence.
+
+echo reply: you're not listening anymore.
+
+address resolution found empty space.
+
+router advertisement for exits that don't exist.

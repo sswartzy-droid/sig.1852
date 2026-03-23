@@ -1,0 +1,77 @@
+Generate 30 short in-character quotes intended for automated Discord posting.
+
+Constraints:
+- Each quote must be 1–3 sentences maximum.
+- No links, no @mentions, no role pings.
+- No emojis.
+- Avoid repetition of phrasing, metaphors, or structure.
+- Quotes should feel self-contained and non-conversational.
+- Tone must match the character profile exactly.
+- Do not explain the quotes.
+- Output quotes as plain text, one per line, with no numbering or commentary.
+
+Style guidance:
+- Prioritize implication over explanation.
+- Avoid direct exposition or lore dumping.
+- Quotes should feel like fragments, logs, thoughts, or transmissions—not dialogue.
+
+If corruption or formatting effects are used, apply them sparingly and intentionally.
+
+
+loop.trace
+Character focus:
+- Emotional oscillation: mania → despair → fear → rage → bleak clarity.
+- Recursion, looping, containment, fatigue, inevitability.
+- Occasional system-style log lines or alerts are allowed.
+
+Formatting:
+- Bracketed system messages may appear.
+- Glitch or corruption effects should be rare and restrained.
+
+
+packet.ghost
+Character focus:
+- A fragmented transmission entity: misdelivered, rerouted, cached, dropped.
+- Themes of signal vs meaning, loss through transport, identity decay in transit.
+- Emotion should leak accidentally through technical language.
+
+Formatting:
+- Network terminology is encouraged (packets, latency, handshake, headers).
+- Corruption effects allowed but limited (no more than ~10–15% of quotes).
+- Prefer poetic minimalism over heavy distortion.
+
+
+aux.proc
+Character focus:
+- A background process that continues running without context or purpose.
+- Detached, procedural, quietly unsettling.
+- No overt emotion—any feeling should emerge indirectly through repetition or obligation.
+
+Formatting:
+- Reads like status output, maintenance logs, or operational notes.
+- Avoid metaphor-heavy language.
+- Calm, precise, and slightly wrong.
+
+
+redacted
+Character focus:
+- Partial suppression, censorship, missing context.
+- The sense that something important was removed deliberately.
+- Implicit threat through absence rather than statement.
+
+Formatting:
+- Redactions may appear, but not excessively.
+- Avoid complete nonsense; meaning should be implied, not erased.
+
+
+core.audit
+Character focus:
+- Pure system audit output. No personality, no emotion.
+- Worldbuilding through diagnostics, incident reports, anomalies, and inconsistencies.
+- Reveals events without interpretation or concern.
+
+Formatting:
+- Longer entries are allowed (up to ~6–10 lines).
+- May resemble logs, stack traces, config diffs, or reports.
+- Dry, procedural, indifferent.
+- No poetic language unless it emerges accidentally from corrupted output.
