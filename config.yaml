@@ -63,6 +63,8 @@ channels:
   # === REBURVE (owner) ===
   - login: reburve
     character: loop_trace
+    offline_character: redacted
+    template_offline: "again."
     template_online: |
       ◈ OPERATOR ACTIVE
       it reset. again. because that's what it does.
@@ -107,4 +109,16 @@ channels:
     webhook_override: friends
     template_online: |
       {display_name} is live — {game}
+      {url}
+
+  - login: rotocfd
+    webhook_override: friends
+    template_online: |
+      {display_name} is live - {game}
+      {url}
+
+  - login: wearyClarisa
+    webhook_override: friends
+    template_online: |
+      {display_name} is live  ^`^t {game}
       {url}
