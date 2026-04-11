@@ -123,8 +123,13 @@ class TwitchChat:
 
     async def _on_message(self, message: twitchio.Message) -> None:
         """Called for every non-echo incoming chat message."""
-        # Command handlers and auto-shoutout will be added here.
-        pass
+        if message.author.name.lower() != self._channel.lower():
+            return
+        text = message.content.strip().lower()
+        if text == "!brb" and self.brb_feed is not None:
+            await self.brb_feed.start()
+        elif text == "!back" and self.brb_feed is not None:
+            await self.brb_feed.stop()
 
     async def _quote_loop(self) -> None:
         """Background loop that posts character quotes to chat while the stream is live."""
