@@ -9,6 +9,7 @@ polling:
 discord:
   system_webhook: ${DISCORD_WEBHOOK_SYSTEM}
   friends_webhook: ${DISCORD_WEBHOOK_FRIENDS_GOLIVE}
+  loop_trace_golive_webhook: ${DISCORD_WEBHOOK_LOOP_TRACE_GOLIVE}
   characters:
     loop_trace: ${DISCORD_WEBHOOK_LOOP_TRACE}
     packet_ghost: ${DISCORD_WEBHOOK_PACKET_GHOST}
@@ -62,7 +63,7 @@ brb:
 channels:
   # === REBURVE (owner) ===
   - login: reburve
-    character: loop_trace
+    webhook_override: loop_trace_golive
     offline_character: redacted
     template_offline: "again."
     template_online: |
