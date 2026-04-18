@@ -91,7 +91,7 @@ def _format_timestamp(ts: float) -> str:
 
 
 async def _start_health_server(
-    state: dict[str, Any], started_at: float, channel_count: int
+    state: dict[str, Any], started_at: float, channel_count: int, chat_ref: list
 ) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
         now = time.time()
@@ -148,16 +148,46 @@ async def _start_health_server(
             content_type="application/json",
         )
 
+    async def _say_handler(request: web.Request) -> web.Response:
+        if not chat_ref:
+            return web.Response(status=503, text='{"error":"chat not initialised"}', content_type="application/json")
+        chat = chat_ref[0]
+        if chat._bot is None:
+            return web.Response(status=503, text='{"error":"chat not connected"}', content_type="application/json")
+        live_now: list[str] = state.get("live_now", [])
+        if chat._channel not in live_now:
+            return web.Response(status=503, text='{"error":"stream not live"}', content_type="application/json")
+        try:
+            body = await request.json()
+        except Exception:
+            return web.Response(status=400, text='{"error":"invalid JSON"}', content_type="application/json")
+        character = str(body.get("character", "")).strip()
+        message = str(body.get("message", "")).strip()
+        if not character or not message:
+            return web.Response(status=400, text='{"error":"character and message required"}', content_type="application/json")
+        formatted = chat._format_chat_message(character, message)
+        channel = chat._bot.get_channel(chat._channel)
+        if channel is None:
+            return web.Response(status=503, text='{"error":"channel not found"}', content_type="application/json")
+        try:
+            await channel.send(formatted)
+        except Exception:
+            log.exception("say handler: failed to send message")
+            return web.Response(status=500, text='{"error":"send failed"}', content_type="application/json")
+        log.info("say: %s posted %d chars via %s", character, len(formatted), request.remote)
+        return web.Response(status=200, text='{"ok":true}', content_type="application/json")
+
     async def _root_handler(request: web.Request) -> web.Response:
         return web.Response(
             status=200,
-            text='{"service": "sig.1852", "endpoints": ["/health"]}',
+            text='{"service": "sig.1852", "endpoints": ["/health", "/say"]}',
             content_type="application/json",
         )
 
     app = web.Application()
     app.router.add_get("/", _root_handler)
     app.router.add_get("/health", _health_handler)
+    app.router.add_post("/say", _say_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, HEALTH_HOST, HEALTH_PORT)
@@ -220,7 +250,8 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
-    health_runner = await _start_health_server(state, time.time(), len(config.channels))
+    chat_ref: list = []
+    health_runner = await _start_health_server(state, time.time(), len(config.channels), chat_ref)
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
@@ -288,6 +319,7 @@ async def main() -> None:
                 save_state=save_state,
                 brb_feed=brb,
             )
+            chat_ref.append(chat)
             tasks.append(asyncio.create_task(chat.run()))
 
         if not tasks:
