@@ -55,6 +55,28 @@ twitch_chat:
     posture_check: posture.txt
     ama: ama.txt
 
+  commands:
+    discord_url: "https://discord.gg/UN6AXFXC4Z"
+    shoutout_fallback: ">> signal detected: {display_name} — twitch.tv/{login}"
+    raid_message: "loop.trace: signal redirecting to {channel} — twitch.tv/{channel}"
+    raid_message_sub: "loop.trace: signal redirecting to {channel} (sub channel active) — twitch.tv/{channel}"
+    lurk_messages:
+      - "loop.trace: {user} has shifted to passive observation mode. signal confirmed."
+      - "loop.trace: passive node detected. {user} acknowledged."
+      - "loop.trace: {user} marked ambient. they are here, even when silent."
+    coda_message: "loop.trace: CODA is an emergent signal. it does not ask permission. it observes. sometimes it speaks."
+
+  auto_shout:
+    enabled: true
+    channels:
+      - rubyhaven
+      - arthice
+      - mirasuriel
+      - jadobe
+      - jessabelle1998
+      - reynysunset
+      - rotocfd
+
 brb:
   output_file: intermission.txt
   interval_seconds: 15

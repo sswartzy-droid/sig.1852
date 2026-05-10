@@ -3,6 +3,7 @@ import logging
 import random
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Callable
 
 import twitchio
@@ -63,6 +64,7 @@ class TwitchChat:
         state: dict[str, Any],
         save_state: Callable[[dict[str, Any]], None],
         brb_feed: BrbFeed | None = None,
+        helix=None,
     ) -> None:
         self.config = config
         self.webhook = discord_webhook
@@ -70,6 +72,7 @@ class TwitchChat:
         self.state = state
         self.save_state = save_state
         self.brb_feed = brb_feed
+        self._helix = helix
         self.log = logging.getLogger("twitch.chat")
 
         chat_cfg = config.raw.get("twitch_chat", {})
@@ -81,7 +84,7 @@ class TwitchChat:
         self._channel: str = chat_cfg.get("channel", "reburve")
 
         self._bot: _Bot | None = None
-        # Per-session seen-user set — in-memory only, intentionally not persisted.
+        # Per-session seen-user set — tracks who has been seen this stream for auto-shout.
         self._seen_users: set[str] = set()
 
         # Build quote filters for chat from shared quotes config.
@@ -90,6 +93,10 @@ class TwitchChat:
             k: int(v) for k, v in quotes_config.get("weights", {}).items()
         }
         self._chat_filters: list[QuoteFilter] = self._build_chat_filters(quotes_config)
+
+    @property
+    def _cmd_cfg(self) -> dict:
+        return self.config.raw.get("twitch_chat", {}).get("commands", {})
 
     @staticmethod
     def _build_chat_filters(quotes_config: dict) -> list[QuoteFilter]:
@@ -121,15 +128,180 @@ class TwitchChat:
         self.log.info("Twitch chat integration active on #%s.", self._channel)
         asyncio.create_task(self._quote_loop())
 
+    # -------------------------------------------------------------------------
+    # Message routing
+    # -------------------------------------------------------------------------
+
     async def _on_message(self, message: twitchio.Message) -> None:
-        """Called for every non-echo incoming chat message."""
-        if message.author.name.lower() != self._channel.lower():
+        username = message.author.name.lower()
+        is_broadcaster = username == self._channel.lower()
+        is_mod = bool(getattr(message.author, "is_mod", False)) or is_broadcaster
+
+        # Auto-shout: fires once per session for listed users, on their first message.
+        if not is_broadcaster and username not in self._seen_users:
+            self._seen_users.add(username)
+            asyncio.create_task(self._maybe_auto_shout(username))
+
+        text = message.content.strip()
+        text_lower = text.lower()
+
+        # Public commands — any viewer.
+        if text_lower == "!lurk":
+            asyncio.create_task(self._cmd_lurk(username))
             return
-        text = message.content.strip().lower()
-        if text == "!brb" and self.brb_feed is not None:
+        if text_lower in ("!discord", "!coda", "!commands"):
+            asyncio.create_task(self._cmd_info(text_lower[1:]))
+            return
+
+        # Mod commands — broadcaster and moderators.
+        if is_mod and text_lower.startswith("!so "):
+            parts = text[4:].strip().split()
+            if parts:
+                asyncio.create_task(self._cmd_shoutout(parts[0]))
+            return
+
+        # Broadcaster-only commands.
+        if not is_broadcaster:
+            return
+
+        if text_lower.startswith("!raid "):
+            parts = text[6:].strip().split()
+            if parts:
+                asyncio.create_task(self._cmd_raid(parts[0], sub_only=False))
+        elif text_lower.startswith("!subraid "):
+            parts = text[9:].strip().split()
+            if parts:
+                asyncio.create_task(self._cmd_raid(parts[0], sub_only=True))
+        elif text_lower == "!brb" and self.brb_feed is not None:
             await self.brb_feed.start()
-        elif text == "!back" and self.brb_feed is not None:
+        elif text_lower == "!back" and self.brb_feed is not None:
             await self.brb_feed.stop()
+
+    # -------------------------------------------------------------------------
+    # Command handlers
+    # -------------------------------------------------------------------------
+
+    async def _maybe_auto_shout(self, username: str) -> None:
+        """Fire a shoutout if the user is on the auto-shout list and stream is live."""
+        auto_cfg = self.config.raw.get("twitch_chat", {}).get("auto_shout", {})
+        if not auto_cfg.get("enabled", False):
+            return
+        shout_list = {c.lower() for c in auto_cfg.get("channels", [])}
+        if username not in shout_list:
+            return
+        live_now: list[str] = self.state.get("live_now", [])
+        if self._channel not in live_now:
+            return
+        self.log.info("Auto-shouting %s.", username)
+        await self._cmd_shoutout(username)
+
+    def _load_shoutout_template(self, username: str) -> str:
+        """Return a random template block from shoutouts/{username}.txt, or the fallback.
+
+        Template files use blank lines to separate blocks — one block is chosen at random.
+        Supported variables: {login}, {display_name}, {url}, {title}, {game}
+        """
+        path = Path("shoutouts") / f"{username}.txt"
+        if path.exists():
+            text = path.read_text(encoding="utf-8").strip()
+            blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+            if blocks:
+                return random.choice(blocks)
+        return self._cmd_cfg.get(
+            "shoutout_fallback",
+            ">> signal detected: {display_name} — twitch.tv/{login}",
+        )
+
+    async def _cmd_shoutout(self, username: str) -> None:
+        username = username.lower().lstrip("@")
+        if not username:
+            return
+
+        template = self._load_shoutout_template(username)
+        needs_stream_data = "{title}" in template or "{game}" in template
+
+        display_name = username
+        title = ""
+        game = ""
+
+        if self._helix:
+            try:
+                users = await self._helix.get_users([username])
+                user_data = users.get(username, {})
+                display_name = user_data.get("display_name", username)
+
+                if needs_stream_data and user_data:
+                    streams = await self._helix.get_streams([user_data["id"]])
+                    if streams:
+                        title = streams[0].get("title", "")
+                        game = streams[0].get("game_name", "")
+            except Exception:
+                self.log.exception("Helix API error during shoutout for %s.", username)
+
+        message = template.format_map({
+            "login": username,
+            "display_name": display_name,
+            "url": f"twitch.tv/{username}",
+            "title": title,
+            "game": game,
+        })
+        await self._send_chat(message)
+        self.log.info("Shoutout posted for %s.", username)
+
+    async def _cmd_lurk(self, username: str) -> None:
+        messages = self._cmd_cfg.get("lurk_messages", [
+            "loop.trace: {user} has shifted to passive observation mode. signal confirmed.",
+        ])
+        template = random.choice(messages) if messages else "loop.trace: {user} acknowledged."
+        await self._send_chat(template.format(user=username))
+
+    async def _cmd_raid(self, channel: str, *, sub_only: bool) -> None:
+        channel = channel.lower().lstrip("#")
+        key = "raid_message_sub" if sub_only else "raid_message"
+        template = self._cmd_cfg.get(
+            key,
+            "loop.trace: signal redirecting to {channel} — twitch.tv/{channel}",
+        )
+        await self._send_chat(template.format(channel=channel))
+
+    async def _cmd_info(self, cmd: str) -> None:
+        if cmd == "discord":
+            url = self._cmd_cfg.get("discord_url", "")
+            if url:
+                await self._send_chat(f"loop.trace: discord signal — {url}")
+            else:
+                self.log.warning("!discord used but discord_url is not configured.")
+        elif cmd == "coda":
+            msg = self._cmd_cfg.get(
+                "coda_message",
+                "loop.trace: CODA is an emergent signal. it observes. sometimes it speaks.",
+            )
+            await self._send_chat(msg)
+        elif cmd == "commands":
+            await self._send_chat(
+                "loop.trace: available signals — !lurk  !so  !raid  !subraid  !discord  !coda"
+            )
+
+    # -------------------------------------------------------------------------
+    # Chat helpers
+    # -------------------------------------------------------------------------
+
+    async def _send_chat(self, message: str) -> None:
+        if self._bot is None:
+            self.log.warning("Bot not connected; cannot send chat message.")
+            return
+        channel = self._bot.get_channel(self._channel)
+        if channel is None:
+            self.log.warning("Channel #%s not found.", self._channel)
+            return
+        try:
+            await channel.send(message)
+        except Exception:
+            self.log.exception("Failed to send message to chat.")
+
+    # -------------------------------------------------------------------------
+    # Quote loop (unchanged)
+    # -------------------------------------------------------------------------
 
     async def _quote_loop(self) -> None:
         """Background loop that posts character quotes to chat while the stream is live."""
@@ -163,14 +335,12 @@ class TwitchChat:
             is_live = self._channel in live_now
 
             if is_live and not was_live:
-                # Stream just came online — start startup delay.
                 went_live_at = time.monotonic()
                 next_post_at = None
                 self.log.info(
                     "Stream is live; waiting %ds before first chat quote.", startup_delay
                 )
             elif not is_live and was_live:
-                # Stream just went offline — reset so next session gets a fresh delay.
                 went_live_at = None
                 next_post_at = None
                 self.log.info("Stream went offline; chat quote schedule reset.")
@@ -182,7 +352,6 @@ class TwitchChat:
 
             now = time.monotonic()
 
-            # Respect the startup delay.
             elapsed = now - went_live_at
             if elapsed < startup_delay:
                 self.log.debug(
@@ -190,7 +359,6 @@ class TwitchChat:
                 )
                 continue
 
-            # First time startup delay clears — schedule the initial post.
             if next_post_at is None:
                 delay = random.uniform(interval_min, interval_max)
                 next_post_at = now + delay
@@ -200,7 +368,6 @@ class TwitchChat:
             if now < next_post_at:
                 continue
 
-            # Post a quote and schedule the next one.
             await self._post_chat_quote(recent)
             delay = random.uniform(interval_min, interval_max)
             next_post_at = now + delay
@@ -215,26 +382,9 @@ class TwitchChat:
 
         quote, character = result
         message = self._format_chat_message(character, quote)
-
-        if self._bot is None:
-            self.log.warning("Bot not connected; cannot post chat quote.")
-            return
-
-        channel = self._bot.get_channel(self._channel)
-        if channel is None:
-            self.log.warning(
-                "Channel #%s not found; cannot post chat quote.", self._channel
-            )
-            return
-
-        try:
-            await channel.send(message)
-            recent.append(quote)
-            self.log.info(
-                "Posted chat quote for %s (%d chars).", character, len(message)
-            )
-        except Exception:
-            self.log.exception("Failed to send quote to Twitch chat.")
+        await self._send_chat(message)
+        recent.append(quote)
+        self.log.info("Posted chat quote for %s (%d chars).", character, len(message))
 
     def _pick_chat_quote(self, recent: deque[str]) -> tuple[str, str] | None:
         """Return (quote_text, character) or None if no valid quote is found."""
@@ -269,7 +419,6 @@ class TwitchChat:
         """Prepend the character display name unless the quote is already self-identified."""
         display = CHAT_DISPLAY_NAMES.get(character, character)
 
-        # Avoid double-prefixing quotes that already open with their character identifier.
         quote_lower = quote.lower()
         already_identified = (
             quote_lower.startswith(display.lower() + ":")

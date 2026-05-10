@@ -318,6 +318,7 @@ async def main() -> None:
                 state=state,
                 save_state=save_state,
                 brb_feed=brb,
+                helix=helix,
             )
             chat_ref.append(chat)
             tasks.append(asyncio.create_task(chat.run()))
