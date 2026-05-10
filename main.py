@@ -91,7 +91,8 @@ def _format_timestamp(ts: float) -> str:
 
 
 async def _start_health_server(
-    state: dict[str, Any], started_at: float, channel_count: int, chat_ref: list
+    state: dict[str, Any], started_at: float, channel_count: int, chat_ref: list,
+    bus_ref: list,
 ) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
         now = time.time()
@@ -175,6 +176,8 @@ async def _start_health_server(
             log.exception("say handler: failed to send message")
             return web.Response(status=500, text='{"error":"send failed"}', content_type="application/json")
         log.info("say: %s posted %d chars via %s", character, len(formatted), request.remote)
+        if bus_ref:
+            asyncio.create_task(bus_ref[0].publish(f"[CODA] chat: {character}: {formatted}"))
         return web.Response(status=200, text='{"ok":true}', content_type="application/json")
 
     async def _root_handler(request: web.Request) -> web.Response:
@@ -251,7 +254,8 @@ async def main() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     chat_ref: list = []
-    health_runner = await _start_health_server(state, time.time(), len(config.channels), chat_ref)
+    bus_ref: list = []
+    health_runner = await _start_health_server(state, time.time(), len(config.channels), chat_ref, bus_ref)
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
@@ -260,6 +264,29 @@ async def main() -> None:
         webhook = DiscordWebhook(session)
 
         tasks: list[asyncio.Task] = []
+
+        # Bus client — optional, config-gated.
+        bus_cfg = config.raw.get("bus", {})
+        bus_client = None
+        if bus_cfg.get("enabled", False):
+            from bus_client import BusClient
+
+            async def _on_bus_event(channel: str, message: str) -> None:
+                if "[TWITCH]" in message:
+                    log.info("Bus [TWITCH]: %s", message)
+
+            bus_client = BusClient(
+                host=bus_cfg.get("host", "192.168.0.11"),
+                port=int(bus_cfg.get("port", 6667)),
+                nick=bus_cfg.get("nick", "sig1852-bus"),
+                channel=bus_cfg.get("channel", "#coda-bus"),
+                on_event=_on_bus_event,
+            )
+            bus_ref.append(bus_client)
+            tasks.append(asyncio.create_task(bus_client.run()))
+            log.info("Bus client enabled — connecting to %s:%d", bus_cfg["host"], bus_cfg["port"])
+
+        bus_publish = bus_client.publish if bus_client else None
 
         polling_config = config.raw.get("polling", {})
         if polling_config.get("enabled", True):
@@ -270,6 +297,7 @@ async def main() -> None:
                 state=state,
                 save_state=save_state,
                 interval_seconds=int(polling_config.get("interval_seconds", 90)),
+                bus_publish=bus_publish,
             )
             tasks.append(asyncio.create_task(poller.run()))
 
@@ -291,6 +319,7 @@ async def main() -> None:
                     webhook=webhook,
                     state=state,
                     save_state=save_state,
+                    bus_publish=bus_publish,
                 )
                 loaded_quotes = quote_drip.quotes
                 tasks.append(asyncio.create_task(quote_drip.run()))

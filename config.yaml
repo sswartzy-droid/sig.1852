@@ -2,6 +2,13 @@ twitch:
   client_id: ${TWITCH_CLIENT_ID}
   client_secret: ${TWITCH_CLIENT_SECRET}
 
+bus:
+  enabled: false
+  host: 192.168.0.11
+  port: 6667
+  nick: sig1852-bus
+  channel: "#coda-bus"
+
 polling:
   enabled: true
   interval_seconds: 90

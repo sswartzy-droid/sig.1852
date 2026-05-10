@@ -1,13 +1,15 @@
 import asyncio
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import aiohttp
 
 from config import AppConfig
 from discord_webhook import DiscordWebhook
 from twitch_helix import TwitchHelix
+
+BusPublish = Callable[[str], Awaitable[None]]
 
 MAX_BACKOFF_MULTIPLIER = 8
 
@@ -28,6 +30,7 @@ class Poller:
         state: dict[str, Any],
         save_state: Callable[[dict[str, Any]], None],
         interval_seconds: int = 90,
+        bus_publish: BusPublish | None = None,
     ) -> None:
         self.config = config
         self.helix = helix
@@ -35,6 +38,7 @@ class Poller:
         self.state = state
         self.save_state = save_state
         self.interval_seconds = interval_seconds
+        self._bus_publish = bus_publish
         self.log = logging.getLogger("twitch.polling")
         self.channel_info: dict[str, dict[str, Any]] = {}
         self.id_map: dict[str, dict[str, Any]] = {}
@@ -182,6 +186,8 @@ class Poller:
         webhook_url = self._resolve_webhook(info)
         try:
             await self.webhook.send(webhook_url, message)
+            if self._bus_publish:
+                asyncio.create_task(self._bus_publish(f"[DISCORD] go_live: {login}"))
         except Exception:
             self.log.exception("Failed to send Discord announcement for %s", login)
 

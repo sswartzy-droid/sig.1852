@@ -5,9 +5,11 @@ import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from discord_webhook import DiscordWebhook
+
+BusPublish = Callable[[str], Awaitable[None]]
 
 MAX_DAILY_QUOTES = 3
 
@@ -69,12 +71,14 @@ class QuoteDrip:
         webhook: DiscordWebhook,
         state: dict,
         save_state: Callable[[dict], None],
+        bus_publish: BusPublish | None = None,
     ) -> None:
         self.quotes_config = quotes_config
         self.characters = characters
         self.webhook = webhook
         self.state = state
         self.save_state = save_state
+        self._bus_publish = bus_publish
         self.log = logging.getLogger("quotes")
         self.quotes_dir = Path(quotes_config.get("quotes_dir", "quotes"))
         self.daily_min = int(quotes_config.get("daily_min", 1))
@@ -190,6 +194,8 @@ class QuoteDrip:
             if not webhook_url:
                 continue
             await self.webhook.send(webhook_url, quote)
+            if self._bus_publish:
+                asyncio.create_task(self._bus_publish(f"[DISCORD] quote: {character}"))
             self.save_state(self.state)
             self.log.info("Posted quote for %s", character)
             return True
