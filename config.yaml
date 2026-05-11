@@ -3,7 +3,7 @@ twitch:
   client_secret: ${TWITCH_CLIENT_SECRET}
 
 bus:
-  enabled: false
+  enabled: true
   host: 192.168.0.11
   port: 6667
   nick: sig1852-bus
