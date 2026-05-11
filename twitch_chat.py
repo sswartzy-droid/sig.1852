@@ -152,7 +152,7 @@ class TwitchChat:
             asyncio.create_task(self._cmd_lurk(username))
             return
         if text_lower in ("!discord", "!coda", "!commands"):
-            asyncio.create_task(self._cmd_info(text_lower[1:]))
+            asyncio.create_task(self._cmd_info(text_lower[1:], username))
             return
 
         # Mod commands — broadcaster and moderators.
@@ -176,8 +176,12 @@ class TwitchChat:
                 asyncio.create_task(self._cmd_raid(parts[0], sub_only=True))
         elif text_lower == "!brb" and self.brb_feed is not None:
             await self.brb_feed.start()
+            if self._bus_publish:
+                asyncio.create_task(self._bus_publish("[TWITCH] command: brb by reburve"))
         elif text_lower == "!back" and self.brb_feed is not None:
             await self.brb_feed.stop()
+            if self._bus_publish:
+                asyncio.create_task(self._bus_publish("[TWITCH] command: back by reburve"))
 
     # -------------------------------------------------------------------------
     # Command handlers
@@ -273,7 +277,7 @@ class TwitchChat:
         if self._bus_publish:
             asyncio.create_task(self._bus_publish(f"[TWITCH] command: {tag} {channel} by {self._channel}"))
 
-    async def _cmd_info(self, cmd: str) -> None:
+    async def _cmd_info(self, cmd: str, username: str) -> None:
         if cmd == "discord":
             url = self._cmd_cfg.get("discord_url", "")
             if url:
@@ -290,6 +294,8 @@ class TwitchChat:
             await self._send_chat(
                 "loop.trace: available signals — !lurk  !so  !raid  !subraid  !discord  !coda"
             )
+        if self._bus_publish:
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: {cmd} by {username}"))
 
     # -------------------------------------------------------------------------
     # Chat helpers
