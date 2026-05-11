@@ -13,12 +13,17 @@ services:
       DISCORD_WEBHOOK_CORE_AUDIT: ${DISCORD_WEBHOOK_CORE_AUDIT}
       DISCORD_WEBHOOK_FRIENDS_GOLIVE: ${DISCORD_WEBHOOK_FRIENDS_GOLIVE}
       TWITCH_CHAT_TOKEN: ${TWITCH_CHAT_TOKEN}
+      HEALTH_HOST: "0.0.0.0"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
+      - ./quotes:/app/quotes:ro
+      - ./intermission.txt:/app/intermission.txt
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8080/health'); sys.exit(0 if r.status == 200 else 1)"]
       interval: 60s
       timeout: 5s
       retries: 3
       start_period: 30s
+    ports:
+      - "8080:8080"
