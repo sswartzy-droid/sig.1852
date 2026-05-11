@@ -65,6 +65,7 @@ class TwitchChat:
         save_state: Callable[[dict[str, Any]], None],
         brb_feed: BrbFeed | None = None,
         helix=None,
+        bus_publish=None,
     ) -> None:
         self.config = config
         self.webhook = discord_webhook
@@ -73,6 +74,7 @@ class TwitchChat:
         self.save_state = save_state
         self.brb_feed = brb_feed
         self._helix = helix
+        self._bus_publish = bus_publish
         self.log = logging.getLogger("twitch.chat")
 
         chat_cfg = config.raw.get("twitch_chat", {})
@@ -247,6 +249,8 @@ class TwitchChat:
         })
         await self._send_chat(message)
         self.log.info("Shoutout posted for %s.", username)
+        if self._bus_publish:
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: shoutout {username} by {self._channel}"))
 
     async def _cmd_lurk(self, username: str) -> None:
         messages = self._cmd_cfg.get("lurk_messages", [
@@ -254,6 +258,8 @@ class TwitchChat:
         ])
         template = random.choice(messages) if messages else "loop.trace: {user} acknowledged."
         await self._send_chat(template.format(user=username))
+        if self._bus_publish:
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: lurk by {username}"))
 
     async def _cmd_raid(self, channel: str, *, sub_only: bool) -> None:
         channel = channel.lower().lstrip("#")
@@ -263,6 +269,9 @@ class TwitchChat:
             "loop.trace: signal redirecting to {channel} — twitch.tv/{channel}",
         )
         await self._send_chat(template.format(channel=channel))
+        tag = "subraid" if sub_only else "raid"
+        if self._bus_publish:
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: {tag} {channel} by {self._channel}"))
 
     async def _cmd_info(self, cmd: str) -> None:
         if cmd == "discord":
