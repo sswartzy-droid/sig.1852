@@ -52,8 +52,9 @@ def _refresh_chat_token() -> None:
     """
     import urllib.parse, urllib.request
 
-    client_id = os.getenv("TWITCH_CLIENT_ID", "")
-    client_secret = os.getenv("TWITCH_CLIENT_SECRET", "")
+    # Prefer dedicated chat-refresh credentials; fall back to the main app credentials.
+    client_id = os.getenv("TWITCH_CHAT_CLIENT_ID") or os.getenv("TWITCH_CLIENT_ID", "")
+    client_secret = os.getenv("TWITCH_CHAT_CLIENT_SECRET") or os.getenv("TWITCH_CLIENT_SECRET", "")
 
     token_file = STATE_DIR / "refresh_token_chat.txt"
     refresh_token = token_file.read_text().strip() if token_file.exists() else ""
