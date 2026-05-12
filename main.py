@@ -43,6 +43,45 @@ HEALTH_HOST = os.getenv("HEALTH_HOST", "127.0.0.1")
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 
 
+def _refresh_chat_token() -> None:
+    """Refresh TWITCH_CHAT_TOKEN at startup using a stored refresh token.
+
+    On first run: reads TWITCH_REFRESH_TOKEN_CHAT from env (set in docker-compose).
+    On subsequent runs: reads from data/refresh_token_chat.txt (persisted across restarts).
+    Silently skips if credentials are not configured.
+    """
+    import urllib.parse, urllib.request
+
+    client_id = os.getenv("TWITCH_CLIENT_ID", "")
+    client_secret = os.getenv("TWITCH_CLIENT_SECRET", "")
+
+    token_file = STATE_DIR / "refresh_token_chat.txt"
+    refresh_token = token_file.read_text().strip() if token_file.exists() else ""
+    if not refresh_token:
+        refresh_token = os.getenv("TWITCH_REFRESH_TOKEN_CHAT", "")
+
+    if not all([client_id, client_secret, refresh_token]):
+        return
+
+    try:
+        payload = urllib.parse.urlencode({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }).encode()
+        req = urllib.request.Request(
+            "https://id.twitch.tv/oauth2/token", data=payload, method="POST"
+        )
+        resp = json.loads(urllib.request.urlopen(req).read())
+        os.environ["TWITCH_CHAT_TOKEN"] = resp["access_token"]
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(resp["refresh_token"])
+        log.info("Chat token refreshed successfully.")
+    except Exception as e:
+        log.warning("Chat token refresh failed: %s — using existing token.", e)
+
+
 def load_state() -> dict[str, Any]:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if STATE_PATH.exists():
@@ -240,6 +279,7 @@ def _setup_logging() -> None:
 
 async def main() -> None:
     _setup_logging()
+    _refresh_chat_token()
     config = load_config(CONFIG_PATH)
     state = load_state()
 
