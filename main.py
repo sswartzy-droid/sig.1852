@@ -43,7 +43,7 @@ HEALTH_HOST = os.getenv("HEALTH_HOST", "127.0.0.1")
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 
 
-def _refresh_chat_token() -> None:
+def _refresh_chat_token() -> str | None:
     """Refresh TWITCH_CHAT_TOKEN at startup using a stored refresh token.
 
     On first run: reads TWITCH_REFRESH_TOKEN_CHAT from env (set in docker-compose).
@@ -62,7 +62,7 @@ def _refresh_chat_token() -> None:
         refresh_token = os.getenv("TWITCH_REFRESH_TOKEN_CHAT", "")
 
     if not all([client_id, client_secret, refresh_token]):
-        return
+        return None
 
     try:
         payload = urllib.parse.urlencode({
@@ -79,8 +79,10 @@ def _refresh_chat_token() -> None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         token_file.write_text(resp["refresh_token"])
         log.info("Chat token refreshed successfully.")
+        return resp["access_token"]
     except Exception as e:
         log.warning("Chat token refresh failed: %s — using existing token.", e)
+        return None
 
 
 def load_state() -> dict[str, Any]:
@@ -132,7 +134,7 @@ def _format_timestamp(ts: float) -> str:
 
 async def _start_health_server(
     state: dict[str, Any], started_at: float, channel_count: int, chat_ref: list,
-    bus_ref: list,
+    bus_ref: list, lore_ref: list,
 ) -> web.AppRunner:
     async def _health_handler(request: web.Request) -> web.Response:
         now = time.time()
@@ -142,9 +144,16 @@ async def _start_health_server(
 
         # Grace period: report healthy during first HEALTH_STALE_SECONDS after start
         if poll_age is not None:
-            healthy = poll_age < HEALTH_STALE_SECONDS
+            poll_healthy = poll_age < HEALTH_STALE_SECONDS
         else:
-            healthy = uptime < HEALTH_STALE_SECONDS
+            poll_healthy = uptime < HEALTH_STALE_SECONDS
+
+        # Chat health: disconnected_seconds is 0 while connected, so this only
+        # fails after the IRC connection has been down longer than the stale window.
+        chat = chat_ref[0] if chat_ref else None
+        chat_disconnected_for = chat.disconnected_seconds if chat else None
+        chat_healthy = chat is None or chat_disconnected_for < HEALTH_STALE_SECONDS
+        healthy = poll_healthy and chat_healthy
 
         quotes = state.get("quotes", {})
         live_now = state.get("live_now", [])
@@ -162,7 +171,13 @@ async def _start_health_server(
             next_quote_in = None
 
         body = json.dumps({
-            "status": "ok" if healthy else "stale",
+            "status": "ok" if healthy else ("stale" if not poll_healthy else "chat_disconnected"),
+            "chat": {
+                "enabled": chat is not None,
+                "connected": bool(chat and chat.connected),
+                "disconnected_seconds": round(chat_disconnected_for, 1)
+                if chat_disconnected_for is not None else None,
+            },
             "server_time": _format_timestamp(now),
             "uptime": _format_duration(uptime),
             "uptime_seconds": round(uptime, 1),
@@ -218,6 +233,8 @@ async def _start_health_server(
         log.info("say: %s posted %d chars via %s", character, len(formatted), request.remote)
         if bus_ref:
             asyncio.create_task(bus_ref[0].publish(f"[CODA] chat: {character}: {formatted}"))
+        if lore_ref:
+            lore_ref[0].maybe_post(character, message)
         return web.Response(status=200, text='{"ok":true}', content_type="application/json")
 
     async def _root_handler(request: web.Request) -> web.Response:
@@ -296,13 +313,26 @@ async def main() -> None:
 
     chat_ref: list = []
     bus_ref: list = []
-    health_runner = await _start_health_server(state, time.time(), len(config.channels), chat_ref, bus_ref)
+    lore_ref: list = []
+    health_runner = await _start_health_server(state, time.time(), len(config.channels), chat_ref, bus_ref, lore_ref)
 
     async with aiohttp.ClientSession() as session:
         helix = TwitchHelix(
             config.twitch["client_id"], config.twitch["client_secret"], session
         )
         webhook = DiscordWebhook(session)
+
+        lore_cfg = config.raw.get("lore", {})
+        if lore_cfg.get("enabled", False):
+            from lore_forward import LoreForward
+
+            lore_ref.append(LoreForward(
+                webhook=webhook,
+                characters=config.discord.get("characters", {}),
+                lore_config=lore_cfg,
+            ))
+            log.info("Lore forwarding enabled (min interval %s min).",
+                     lore_cfg.get("min_interval_minutes", 30))
 
         tasks: list[asyncio.Task] = []
 
@@ -390,6 +420,7 @@ async def main() -> None:
                 brb_feed=brb,
                 helix=helix,
                 bus_publish=bus_publish,
+                refresh_token_cb=_refresh_chat_token,
             )
             chat_ref.append(chat)
             tasks.append(asyncio.create_task(chat.run()))

@@ -28,6 +28,10 @@ CHAT_DISPLAY_NAMES = {
     "core_audit": "core.audit",
 }
 
+WATCHDOG_POLL_SECONDS = 15
+CONNECTION_DEAD_SECONDS = 120
+RECONNECT_DELAY_SECONDS = 10
+
 
 class _Bot(commands.Bot):
     """Inner twitchio IRC bot. Delegates events back to the TwitchChat parent."""
@@ -66,6 +70,7 @@ class TwitchChat:
         brb_feed: BrbFeed | None = None,
         helix=None,
         bus_publish=None,
+        refresh_token_cb: Callable[[], str | None] | None = None,
     ) -> None:
         self.config = config
         self.webhook = discord_webhook
@@ -86,6 +91,9 @@ class TwitchChat:
         self._channel: str = chat_cfg.get("channel", "reburve")
 
         self._bot: _Bot | None = None
+        self._refresh_token_cb = refresh_token_cb
+        self._quote_task: asyncio.Task | None = None
+        self._last_connected = time.monotonic()
         # Per-session seen-user set — tracks who has been seen this stream for auto-shout.
         self._seen_users: set[str] = set()
 
@@ -112,6 +120,18 @@ class TwitchChat:
             filters.append(_check_links)
         return filters
 
+    @property
+    def connected(self) -> bool:
+        conn = getattr(self._bot, "_connection", None) if self._bot else None
+        return bool(conn is not None and getattr(conn, "is_alive", False))
+
+    @property
+    def disconnected_seconds(self) -> float:
+        if self.connected:
+            self._last_connected = time.monotonic()
+            return 0.0
+        return time.monotonic() - self._last_connected
+
     async def run(self) -> None:
         if not self._token:
             self.log.warning(
@@ -121,14 +141,67 @@ class TwitchChat:
             # Block forever so FIRST_COMPLETED doesn't trigger shutdown.
             await asyncio.Event().wait()
             return
-        self._bot = _Bot(token=self._token, channel=self._channel, parent=self)
-        self.log.info("Connecting to Twitch IRC, joining #%s...", self._channel)
-        await self._bot.start()
+        while True:
+            self._bot = _Bot(token=self._token, channel=self._channel, parent=self)
+            self.log.info("Connecting to Twitch IRC, joining #%s...", self._channel)
+            bot_task = asyncio.create_task(self._bot.start())
+            await self._watch_connection(bot_task)
+            bot_task.cancel()
+            try:
+                await self._bot.close()
+            except Exception:
+                pass
+            try:
+                await bot_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            self._bot = None
+            await self._refresh_token()
+            self.log.warning("Rebuilding IRC connection in %ds.", RECONNECT_DELAY_SECONDS)
+            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+
+    async def _watch_connection(self, bot_task: asyncio.Task) -> None:
+        """Return once the bot task ends or the websocket has been dead too long.
+
+        twitchio retries a dropped connection internally with the token the bot
+        was constructed with — once the access token expires, that internal loop
+        can never succeed, so a dead websocket must be detected from outside.
+        """
+        last_alive = time.monotonic()
+        while True:
+            done, _ = await asyncio.wait({bot_task}, timeout=WATCHDOG_POLL_SECONDS)
+            if done:
+                exc = None if bot_task.cancelled() else bot_task.exception()
+                if exc:
+                    self.log.error("twitchio bot task exited: %s", exc)
+                return
+            if self.connected:
+                last_alive = time.monotonic()
+            elif time.monotonic() - last_alive > CONNECTION_DEAD_SECONDS:
+                self.log.warning(
+                    "IRC websocket dead for over %ds; forcing token refresh and reconnect.",
+                    CONNECTION_DEAD_SECONDS,
+                )
+                return
+
+    async def _refresh_token(self) -> None:
+        if self._refresh_token_cb is None:
+            return
+        loop = asyncio.get_running_loop()
+        new_token = await loop.run_in_executor(None, self._refresh_token_cb)
+        if not new_token:
+            return
+        if new_token.startswith("oauth:"):
+            new_token = new_token[len("oauth:"):]
+        self._token = new_token
 
     async def _on_ready(self) -> None:
         """Called once the IRC connection is established and the channel is joined."""
         self.log.info("Twitch chat integration active on #%s.", self._channel)
-        asyncio.create_task(self._quote_loop())
+        if self._quote_task is None or self._quote_task.done():
+            self._quote_task = asyncio.create_task(self._quote_loop())
 
     # -------------------------------------------------------------------------
     # Message routing

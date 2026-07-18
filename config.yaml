@@ -4,7 +4,7 @@ twitch:
 
 bus:
   enabled: true
-  host: 192.168.0.11
+  host: 192.168.20.21
   port: 6667
   nick: sig1852-bus
   channel: "#coda-bus"
@@ -23,6 +23,11 @@ discord:
     redacted: ${DISCORD_WEBHOOK_REDACTED}
     aux_proc: ${DISCORD_WEBHOOK_AUX_PROC}
     core_audit: ${DISCORD_WEBHOOK_CORE_AUDIT}
+
+# Mirror occasional delivered CODA stream lines (/say) to the character webhooks.
+lore:
+  enabled: true
+  min_interval_minutes: 30
 
 quotes:
   enabled: true
