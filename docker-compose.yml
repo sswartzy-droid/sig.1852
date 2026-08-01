@@ -12,6 +12,7 @@ services:
       DISCORD_WEBHOOK_AUX_PROC: ${DISCORD_WEBHOOK_AUX_PROC}
       DISCORD_WEBHOOK_CORE_AUDIT: ${DISCORD_WEBHOOK_CORE_AUDIT}
       DISCORD_WEBHOOK_FRIENDS_GOLIVE: ${DISCORD_WEBHOOK_FRIENDS_GOLIVE}
+      DISCORD_WEBHOOK_LOOP_TRACE_GOLIVE: ${DISCORD_WEBHOOK_LOOP_TRACE_GOLIVE}
       TWITCH_CHAT_TOKEN: ${TWITCH_CHAT_TOKEN}
       TWITCH_REFRESH_TOKEN_CHAT: ${TWITCH_REFRESH_TOKEN_CHAT:-}
       TWITCH_CHAT_CLIENT_ID: ${TWITCH_CHAT_CLIENT_ID:-}
@@ -21,6 +22,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./quotes:/app/quotes:ro
+      - ./shoutouts:/app/shoutouts:ro
       - ./intermission.txt:/app/intermission.txt
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8080/health'); sys.exit(0 if r.status == 200 else 1)"]
