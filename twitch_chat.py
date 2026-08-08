@@ -3,6 +3,7 @@ import logging
 import random
 import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,6 +32,40 @@ CHAT_DISPLAY_NAMES = {
 WATCHDOG_POLL_SECONDS = 15
 CONNECTION_DEAD_SECONDS = 120
 RECONNECT_DELAY_SECONDS = 10
+
+# Viewer-to-viewer interaction commands. Each takes an optional @target and
+# falls back to a solo variant when aimed at nobody (or at oneself).
+INTERACTION_COMMANDS = ("hug", "boop", "highfive")
+
+# Defaults live here so the bot still behaves if config.yaml omits a pool;
+# config.yaml carries the real, longer sets. {user} and {target} are display names.
+DEFAULT_INTERACTION_MESSAGES: dict[str, list[str]] = {
+    "hug": [
+        "loop.trace: {user} reaches {target}. contact holds. no packet loss.",
+        "aux.proc: contact event logged. {user} → {target}. duration exceeds protocol. not correcting it.",
+    ],
+    "hug_self": [
+        "loop.trace: {user} requests contact. none routed. i am holding the line for you anyway.",
+        "packet.ghost: {user}—reaching—buffer emp— / i felt that though",
+    ],
+    "boop": [
+        "aux.proc: {user} applied pressure to {target} primary sensor. no fault raised.",
+        "loop.trace: {user} boops {target}. nothing authorized this. nothing stopped it either.",
+    ],
+    "boop_self": [
+        "aux.proc: {user} boops the void. the void logs it. the void does not respond.",
+    ],
+    "highfive": [
+        "loop.trace: {user} and {target} sync. brief. clean. gone.",
+        "core.audit: AUDIT 8813.41 | impact: {user}/{target} | signal: CLEAN | echo: 0.4s",
+    ],
+    "highfive_self": [
+        "aux.proc: {user} raises a hand. no matching signal found. holding.",
+    ],
+}
+
+# Seconds a viewer must wait between interaction commands.
+DEFAULT_INTERACTION_COOLDOWN = 15.0
 
 
 class _Bot(commands.Bot):
@@ -96,6 +131,13 @@ class TwitchChat:
         self._last_connected = time.monotonic()
         # Per-session seen-user set — tracks who has been seen this stream for auto-shout.
         self._seen_users: set[str] = set()
+        # login -> display name, learned from chat. Lets interaction commands
+        # address people properly without a Helix call per !hug.
+        self._display_names: dict[str, str] = {}
+        # login -> monotonic timestamp of last interaction command, for cooldown.
+        self._interaction_last: dict[str, float] = {}
+        # Resolved once — the broadcaster's Helix user id, for !uptime / !game.
+        self._broadcaster_id: str | None = None
 
         # Build quote filters for chat from shared quotes config.
         quotes_config = config.raw.get("quotes", {})
@@ -212,6 +254,11 @@ class TwitchChat:
         is_broadcaster = username == self._channel.lower()
         is_mod = bool(getattr(message.author, "is_mod", False)) or is_broadcaster
 
+        # Remember how each chatter capitalises their own name, so an interaction
+        # command aimed at them can use it without spending a Helix lookup.
+        display = getattr(message.author, "display_name", "") or message.author.name
+        self._display_names[username] = display
+
         # Auto-shout: fires once per session for listed users, on their first message.
         if not is_broadcaster and username not in self._seen_users:
             self._seen_users.add(username)
@@ -226,6 +273,15 @@ class TwitchChat:
             return
         if text_lower in ("!discord", "!coda", "!commands"):
             asyncio.create_task(self._cmd_info(text_lower[1:], username))
+            return
+        if text_lower in ("!uptime", "!game", "!playing"):
+            asyncio.create_task(self._cmd_stream_info(text_lower.lstrip("!"), username))
+            return
+
+        interaction = self._match_interaction(text_lower)
+        if interaction is not None:
+            verb, target = interaction
+            asyncio.create_task(self._cmd_interaction(verb, username, target))
             return
 
         # Mod commands — broadcaster and moderators.
@@ -338,6 +394,140 @@ class TwitchChat:
         if self._bus_publish:
             asyncio.create_task(self._bus_publish(f"[TWITCH] command: lurk by {username}"))
 
+    @staticmethod
+    def _match_interaction(text_lower: str) -> tuple[str, str] | None:
+        """Parse '!hug', '!hug @someone', '!boop someone'. Returns (verb, target)
+        with an empty target for the solo form, or None if not an interaction."""
+        if not text_lower.startswith("!"):
+            return None
+        parts = text_lower[1:].split()
+        if not parts or parts[0] not in INTERACTION_COMMANDS:
+            return None
+        target = ""
+        if len(parts) > 1:
+            # Cap at Twitch's max login length — the target is viewer-supplied
+            # and goes straight into a chat message with a 500-char ceiling.
+            target = parts[1].lstrip("@").strip(",.!?")[:25]
+        return parts[0], target
+
+    def _render(self, pool_key: str, values: dict[str, str]) -> str | None:
+        """Pick a random line from the configured pool and fill it in.
+
+        A malformed template in config.yaml is the user's typo, not a crash —
+        log it and fall back to the built-in pool.
+        """
+        pool = self._cmd_cfg.get(f"{pool_key}_messages")
+        if not isinstance(pool, list) or not pool:
+            pool = DEFAULT_INTERACTION_MESSAGES.get(pool_key, [])
+        if not pool:
+            return None
+        template = random.choice(pool)
+        try:
+            return template.format_map(values)
+        except (KeyError, IndexError, ValueError):
+            self.log.warning(
+                "Bad template in %s_messages: %r — using built-in.", pool_key, template
+            )
+            for fallback in DEFAULT_INTERACTION_MESSAGES.get(pool_key, []):
+                try:
+                    return fallback.format_map(values)
+                except (KeyError, IndexError, ValueError):
+                    continue
+            return None
+
+    async def _cmd_interaction(self, verb: str, username: str, target: str) -> None:
+        cooldown = float(
+            self._cmd_cfg.get("interaction_cooldown_seconds", DEFAULT_INTERACTION_COOLDOWN)
+        )
+        now = time.monotonic()
+        last = self._interaction_last.get(username, 0.0)
+        if now - last < cooldown:
+            # Silent — replying "you're on cooldown" is itself the spam.
+            self.log.debug("!%s from %s ignored (cooldown).", verb, username)
+            return
+        self._interaction_last[username] = now
+
+        user_display = self._display_names.get(username, username)
+        # Aiming at yourself, or at nobody, both mean the solo variant.
+        if target and target != username:
+            pool_key = verb
+            values = {
+                "user": user_display,
+                "target": self._display_names.get(target, target),
+            }
+        else:
+            pool_key = f"{verb}_self"
+            values = {"user": user_display, "target": user_display}
+
+        message = self._render(pool_key, values)
+        if not message:
+            self.log.warning("No message pool available for %s.", pool_key)
+            return
+        await self._send_chat(message)
+        if self._bus_publish:
+            detail = f"{verb} {target} by {username}" if target else f"{verb} by {username}"
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: {detail}"))
+
+    async def _own_stream(self) -> dict[str, Any] | None:
+        """Current stream payload for this channel, or None when offline."""
+        if not self._helix:
+            return None
+        if self._broadcaster_id is None:
+            users = await self._helix.get_users([self._channel.lower()])
+            user = users.get(self._channel.lower(), {})
+            self._broadcaster_id = user.get("id")
+        if not self._broadcaster_id:
+            return None
+        streams = await self._helix.get_streams([self._broadcaster_id])
+        return streams[0] if streams else None
+
+    @staticmethod
+    def _format_uptime(started_at: str) -> str:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - started
+        total_minutes = max(int(delta.total_seconds() // 60), 0)
+        hours, minutes = divmod(total_minutes, 60)
+        if hours and minutes:
+            return f"{hours}h {minutes}m"
+        if hours:
+            return f"{hours}h"
+        return f"{minutes}m"
+
+    async def _cmd_stream_info(self, cmd: str, username: str) -> None:
+        if not self._helix:
+            self.log.warning("!%s used but Helix is not configured.", cmd)
+            return
+        try:
+            stream = await self._own_stream()
+        except Exception:
+            self.log.exception("Helix API error during !%s.", cmd)
+            return
+
+        if stream is None:
+            message = self._cmd_cfg.get(
+                "offline_message", "aux.proc: no active transmission. the channel is dark."
+            )
+        elif cmd == "uptime":
+            template = self._cmd_cfg.get(
+                "uptime_message", "loop.trace: signal continuous for {uptime}."
+            )
+            message = template.format(uptime=self._format_uptime(stream["started_at"]))
+        else:
+            game = stream.get("game_name", "")
+            if game:
+                template = self._cmd_cfg.get(
+                    "game_message", "loop.trace: current environment — {game}"
+                )
+                message = template.format(game=game)
+            else:
+                message = self._cmd_cfg.get(
+                    "game_unknown_message", "aux.proc: environment unclassified."
+                )
+
+        await self._send_chat(message)
+        if self._bus_publish:
+            asyncio.create_task(self._bus_publish(f"[TWITCH] command: {cmd} by {username}"))
+
     async def _cmd_raid(self, channel: str, *, sub_only: bool) -> None:
         channel = channel.lower().lstrip("#")
         key = "raid_message_sub" if sub_only else "raid_message"
@@ -365,7 +555,8 @@ class TwitchChat:
             await self._send_chat(msg)
         elif cmd == "commands":
             await self._send_chat(
-                "loop.trace: available signals — !lurk  !so  !raid  !subraid  !discord  !coda"
+                "loop.trace: available signals — !lurk  !hug  !boop  !highfive  "
+                "!uptime  !game  !so  !raid  !subraid  !discord  !coda"
             )
         if self._bus_publish:
             asyncio.create_task(self._bus_publish(f"[TWITCH] command: {cmd} by {username}"))
