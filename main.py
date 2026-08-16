@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import logging.handlers
@@ -40,6 +41,7 @@ def _safe_int_env(name: str, default: int) -> int:
 HEALTH_PORT = _safe_int_env("HEALTH_PORT", 8080)
 HEALTH_STALE_SECONDS = _safe_int_env("HEALTH_STALE_SECONDS", 300)
 HEALTH_HOST = os.getenv("HEALTH_HOST", "127.0.0.1")
+SAY_TOKEN = os.getenv("SAY_TOKEN", "")
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 
 
@@ -205,6 +207,15 @@ async def _start_health_server(
         )
 
     async def _say_handler(request: web.Request) -> web.Response:
+        # /say posts to live Twitch chat, so it is authenticated. Fails closed:
+        # with no SAY_TOKEN configured the endpoint refuses rather than
+        # silently accepting anything that can reach the port.
+        if not SAY_TOKEN:
+            log.error("say: refused - SAY_TOKEN is not configured")
+            return web.Response(status=503, text='{"error":"say not configured"}', content_type="application/json")
+        if not hmac.compare_digest(request.headers.get("X-Say-Token", ""), SAY_TOKEN):
+            log.warning("say: rejected bad token from %s", request.remote)
+            return web.Response(status=401, text='{"error":"unauthorized"}', content_type="application/json")
         if not chat_ref:
             return web.Response(status=503, text='{"error":"chat not initialised"}', content_type="application/json")
         chat = chat_ref[0]

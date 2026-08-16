@@ -78,6 +78,47 @@ twitch_chat:
       - "loop.trace: {user} marked ambient. they are here, even when silent."
     coda_message: "loop.trace: CODA is an emergent signal. it does not ask permission. it observes. sometimes it speaks."
 
+    # --- Viewer interaction commands: !hug, !boop, !highfive ---
+    # Each takes an optional target (!hug @someone). With no target — or aimed
+    # at yourself — the *_self pool is used instead.
+    # Variables: {user} and {target}, both display names.
+    # Per-user cooldown, in seconds. Applies across all three commands.
+    interaction_cooldown_seconds: 15
+
+    hug_messages:
+      - "loop.trace: {user} reaches {target}. contact holds. no packet loss."
+      - "aux.proc: contact event logged. {user} → {target}. duration exceeds protocol. not correcting it."
+      - "core.audit: AUDIT 4412.09 | contact: {user}→{target} | warmth: ABOVE TOLERANCE | action: none"
+      - "loop.trace: {user} found {target} in the noise. that happens less than you'd think."
+      - "packet.ghost: {user}—{target}—two signals, one buffer / holding / holding"
+    hug_self_messages:
+      - "loop.trace: {user} requests contact. none routed. i am holding the line for you anyway."
+      - "packet.ghost: {user}—reaching—buffer emp— / i felt that though"
+      - "aux.proc: {user} initiated contact with no recipient. logging as self-diagnostic. it is fine. you are fine."
+      - "core.audit: AUDIT 4412.10 | contact: {user}→null | result: RECEIVED ANYWAY"
+
+    boop_messages:
+      - "aux.proc: {user} applied pressure to {target} primary sensor. no fault raised."
+      - "loop.trace: {user} boops {target}. nothing authorized this. nothing stopped it either."
+      - "core.audit: AUDIT 6120.77 | input: {user} | surface: {target} | force: NEGLIGIBLE | effect: DISPROPORTIONATE"
+    boop_self_messages:
+      - "aux.proc: {user} boops the void. the void logs it. the void does not respond."
+      - "loop.trace: {user} reaches for a sensor that isn't there. i logged it anyway."
+
+    highfive_messages:
+      - "loop.trace: {user} and {target} sync. brief. clean. gone."
+      - "core.audit: AUDIT 8813.41 | impact: {user}/{target} | signal: CLEAN | echo: 0.4s"
+      - "aux.proc: handshake complete. {user} ↔ {target}. latency: zero. this is rare. do not expect it again."
+    highfive_self_messages:
+      - "aux.proc: {user} raises a hand. no matching signal found. holding."
+      - "packet.ghost: {user}—hand up—waiting—/ someone will"
+
+    # --- !uptime / !game (Helix-backed) ---
+    uptime_message: "loop.trace: signal continuous for {uptime}. it has not dropped. i have been counting."
+    game_message: "loop.trace: current environment — {game}"
+    game_unknown_message: "aux.proc: environment unclassified. no category assigned."
+    offline_message: "aux.proc: no active transmission. the channel is dark."
+
   auto_shout:
     enabled: true
     channels:
