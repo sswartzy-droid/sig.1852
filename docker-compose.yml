@@ -18,6 +18,7 @@ services:
       TWITCH_CHAT_CLIENT_ID: ${TWITCH_CHAT_CLIENT_ID:-}
       TWITCH_CHAT_CLIENT_SECRET: ${TWITCH_CHAT_CLIENT_SECRET:-}
       HEALTH_HOST: "0.0.0.0"
+      SAY_TOKEN: ${SAY_TOKEN}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
