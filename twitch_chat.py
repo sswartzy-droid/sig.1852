@@ -33,6 +33,22 @@ WATCHDOG_POLL_SECONDS = 15
 CONNECTION_DEAD_SECONDS = 120
 RECONNECT_DELAY_SECONDS = 10
 
+# How long the IRC session may go completely silent before we call it dead.
+# Twitch sends a server PING roughly every 5 minutes and twitchio surfaces every
+# raw line through event_raw_data, so a healthy session is never quiet for long
+# even on a channel with no chatters.
+IRC_SILENCE_SECONDS = 360
+
+# Raw IRC substrings that prove the session is NOT usable, whatever the socket
+# says. Twitch answers a dead access token with a NOTICE and then closes; the
+# socket reopens seconds later, which is exactly how this failure hid for days.
+AUTH_FAILURE_MARKERS = (
+    "Login authentication failed",
+    "Login unsuccessful",
+    "Improperly formatted auth",
+    "Invalid NICK",
+)
+
 # Viewer-to-viewer interaction commands. Each takes an optional @target and
 # falls back to a solo variant when aimed at nobody (or at oneself).
 INTERACTION_COMMANDS = ("hug", "boop", "highfive")
@@ -88,6 +104,11 @@ class _Bot(commands.Bot):
         await self._parent._on_message(message)
         await self.handle_commands(message)
 
+    async def event_raw_data(self, data: str) -> None:
+        # Every raw IRC line, including server PINGs. This is the heartbeat the
+        # liveness check is built on -- see TwitchChat.connected.
+        self._parent._note_irc_line(data)
+
     async def event_error(self, error: Exception, data: str | None = None) -> None:
         self.log.error("twitchio error: %s", error, exc_info=True)
 
@@ -129,6 +150,11 @@ class TwitchChat:
         self._refresh_token_cb = refresh_token_cb
         self._quote_task: asyncio.Task | None = None
         self._last_connected = time.monotonic()
+        # --- IRC session liveness (see the `connected` property) -------------
+        # _joined_at is set only when the channel JOIN actually completes, and
+        # cleared the moment anything proves the session is no longer usable.
+        self._joined_at: float | None = None
+        self._last_irc_line = time.monotonic()
         # Per-session seen-user set — tracks who has been seen this stream for auto-shout.
         self._seen_users: set[str] = set()
         # login -> display name, learned from chat. Lets interaction commands
@@ -162,10 +188,54 @@ class TwitchChat:
             filters.append(_check_links)
         return filters
 
+    def _note_irc_line(self, data: str) -> None:
+        """Record inbound IRC traffic, and notice lines that disprove liveness."""
+        self._last_irc_line = time.monotonic()
+        if any(marker in data for marker in AUTH_FAILURE_MARKERS):
+            if self._joined_at is not None:
+                self.log.warning(
+                    "Twitch rejected the chat credentials mid-session; "
+                    "marking IRC dead so the watchdog forces a token refresh."
+                )
+            self._joined_at = None
+        elif " RECONNECT" in data:
+            # Twitch asked us to reconnect. Until the JOIN completes again we are
+            # not carrying chat, so do not report connected in the meantime.
+            self.log.info("Twitch sent RECONNECT; awaiting a fresh channel join.")
+            self._joined_at = None
+
     @property
     def connected(self) -> bool:
-        conn = getattr(self._bot, "_connection", None) if self._bot else None
-        return bool(conn is not None and getattr(conn, "is_alive", False))
+        """True only with positive evidence that chat is actually working.
+
+        The previous implementation returned twitchio's `conn.is_alive`, which is
+        just `self._websocket is not None and not self._websocket.closed` -- the
+        transport, nothing more. When the access token expires the socket still
+        opens fine, fails IRC auth, closes, and reopens ~10s later, so `is_alive`
+        samples True almost always. That single false signal is why the reconnect
+        watchdog never fired, `/health` returned 200, and Uptime Kuma stayed green
+        through two multi-day chat outages (2026-07-20 and 2026-08-17).
+
+        Three independent conditions now have to hold, each covering a different
+        way the old check failed:
+
+        1. the channel JOIN completed and nothing has since disproved it
+           -- catches "socket fine, auth rejected, never actually in the channel"
+        2. the websocket is open -- necessary, but no longer sufficient
+        3. an IRC line arrived recently -- catches a session that silently
+           stopped carrying traffic without any close being observed
+
+        Deliberately built on our own bookkeeping rather than twitchio internals:
+        `connected_channels` reads `_connection._cache`, which is never cleared by
+        `_connect`, `_close` or `_reconnect`, so it goes stale after a drop and
+        would reproduce the same bug.
+        """
+        if self._bot is None or self._joined_at is None:
+            return False
+        conn = getattr(self._bot, "_connection", None)
+        if conn is None or not getattr(conn, "is_alive", False):
+            return False
+        return (time.monotonic() - self._last_irc_line) < IRC_SILENCE_SECONDS
 
     @property
     def disconnected_seconds(self) -> float:
@@ -185,6 +255,9 @@ class TwitchChat:
             return
         while True:
             self._bot = _Bot(token=self._token, channel=self._channel, parent=self)
+            # Fresh connection: nothing is proven until this one joins for itself.
+            self._joined_at = None
+            self._last_irc_line = time.monotonic()
             self.log.info("Connecting to Twitch IRC, joining #%s...", self._channel)
             bot_task = asyncio.create_task(self._bot.start())
             await self._watch_connection(bot_task)
@@ -223,8 +296,12 @@ class TwitchChat:
                 last_alive = time.monotonic()
             elif time.monotonic() - last_alive > CONNECTION_DEAD_SECONDS:
                 self.log.warning(
-                    "IRC websocket dead for over %ds; forcing token refresh and reconnect.",
+                    "IRC session not usable for over %ds (joined=%s, socket_alive=%s, "
+                    "last_line=%.0fs ago); forcing token refresh and reconnect.",
                     CONNECTION_DEAD_SECONDS,
+                    self._joined_at is not None,
+                    bool(getattr(getattr(self._bot, "_connection", None), "is_alive", False)),
+                    time.monotonic() - self._last_irc_line,
                 )
                 return
 
@@ -241,6 +318,12 @@ class TwitchChat:
 
     async def _on_ready(self) -> None:
         """Called once the IRC connection is established and the channel is joined."""
+        # The one place that may set _joined_at: twitchio dispatches ready only
+        # after the channel JOIN is confirmed. Note it is NOT re-dispatched after
+        # an internal reconnect (the call is commented out in twitchio 2.10), so
+        # a reconnect correctly leaves us "not connected" until run() rebuilds.
+        self._joined_at = time.monotonic()
+        self._last_irc_line = time.monotonic()
         self.log.info("Twitch chat integration active on #%s.", self._channel)
         if self._quote_task is None or self._quote_task.done():
             self._quote_task = asyncio.create_task(self._quote_loop())
