@@ -191,6 +191,16 @@ class TwitchChat:
     def _note_irc_line(self, data: str) -> None:
         """Record inbound IRC traffic, and notice lines that disprove liveness."""
         self._last_irc_line = time.monotonic()
+        # Our own JOIN confirmation from the server. twitchio only dispatches
+        # `ready` once per bot object (the re-dispatch after an internal
+        # reconnect is commented out in 2.10), so without this a routine Twitch
+        # RECONNECT would look dead until the watchdog rebuilt the whole
+        # connection -- turning a seamless rejoin into ~2 minutes of downtime.
+        if f" join #{self._channel.lower()}" in data.lower():
+            if self._joined_at is None:
+                self.log.info("Channel join confirmed for #%s.", self._channel)
+            self._joined_at = time.monotonic()
+            return
         if any(marker in data for marker in AUTH_FAILURE_MARKERS):
             if self._joined_at is not None:
                 self.log.warning(

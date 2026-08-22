@@ -44,6 +44,7 @@ def _chat(joined: bool = True, socket_alive: bool = True,
     c = TwitchChat.__new__(TwitchChat)
     c.log = _Log()
     c._bot = _Bot(socket_alive)
+    c._channel = "reburve"
     c._joined_at = time.monotonic() if joined else None
     c._last_irc_line = time.monotonic() - silent_for
     return c
@@ -101,6 +102,25 @@ class ConnectedProperty(unittest.TestCase):
             ":viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #reburve :did it reconnect yet"
         )
         self.assertTrue(c.connected)
+
+    def test_server_join_line_restores_ready_after_reconnect(self):
+        """A routine Twitch RECONNECT must not cost a full rebuild.
+
+        twitchio dispatches `ready` only once per bot object, so the JOIN line
+        from the server is the only evidence a rejoin succeeded.
+        """
+        c = _chat(joined=True)
+        c._channel = "reburve"
+        c._note_irc_line(":tmi.twitch.tv RECONNECT")
+        self.assertFalse(c.connected)
+        c._note_irc_line(":sig1852!sig1852@sig1852.tmi.twitch.tv JOIN #reburve")
+        self.assertTrue(c.connected)
+
+    def test_join_to_a_different_channel_is_ignored(self):
+        c = _chat(joined=False)
+        c._channel = "reburve"
+        c._note_irc_line(":someone!x@x.tmi.twitch.tv JOIN #someotherchannel")
+        self.assertFalse(c.connected)
 
     def test_any_line_refreshes_the_silence_timer(self):
         c = _chat(silent_for=IRC_SILENCE_SECONDS + 1)
