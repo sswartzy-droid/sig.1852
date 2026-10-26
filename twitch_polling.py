@@ -13,6 +13,15 @@ BusPublish = Callable[[str], Awaitable[None]]
 
 MAX_BACKOFF_MULTIPLIER = 8
 
+# The Helix fetch had no timeout of its own, so it inherited aiohttp's default of
+# 5 minutes. A call that hung ~4 minutes and then succeeded pushed poll_age past
+# /health's 300s and paged me, and logged nothing, because nothing had failed
+# (2026-08-15 20:18, recovered 20:26). Now a hang is a logged, retried failure.
+POLL_TIMEOUT_SECONDS = 60
+# A poll slower than this succeeds but leaves a WARNING behind.
+SLOW_POLL_SECONDS = 20
+STALL_CHECK_SECONDS = 30
+
 
 class _SafeDict(dict):
     """dict subclass that returns the key as '{key}' for missing lookups."""
@@ -31,6 +40,7 @@ class Poller:
         save_state: Callable[[dict[str, Any]], None],
         interval_seconds: int = 90,
         bus_publish: BusPublish | None = None,
+        stale_seconds: float = 300,
     ) -> None:
         self.config = config
         self.helix = helix
@@ -43,6 +53,11 @@ class Poller:
         self.channel_info: dict[str, dict[str, Any]] = {}
         self.id_map: dict[str, dict[str, Any]] = {}
         self._consecutive_failures = 0
+        # Mirrors /health's HEALTH_STALE_SECONDS: past this since the last good
+        # poll, /health returns 503, and the stall watcher says so in the log.
+        self.stale_seconds = stale_seconds
+        self._poll_started: float | None = None
+        self._stall_logged = False
 
     async def initialize(self) -> None:
         logins = [channel["login"].lower() for channel in self.config.channels]
@@ -75,6 +90,13 @@ class Poller:
         await self.initialize()
         self._ensure_state_shape()
         self._config_mtime = self.config.get_mtime()
+        watcher = asyncio.create_task(self._stall_watch(), name="poll-stall-watch")
+        try:
+            await self._poll_forever()
+        finally:
+            watcher.cancel()
+
+    async def _poll_forever(self) -> None:
         while True:
             await self._check_config_reload()
             await self._poll_once()
@@ -102,11 +124,15 @@ class Poller:
         except Exception:
             self.log.exception("Failed to reload config; keeping current.")
 
+    def _sleep_for(self, failures: int) -> int:
+        if failures <= 0:
+            return self.interval_seconds
+        return self.interval_seconds * min(2 ** failures, MAX_BACKOFF_MULTIPLIER)
+
     def _next_sleep(self) -> float:
         if self._consecutive_failures <= 0:
             return self.interval_seconds
-        multiplier = min(2 ** self._consecutive_failures, MAX_BACKOFF_MULTIPLIER)
-        backed_off = self.interval_seconds * multiplier
+        backed_off = self._sleep_for(self._consecutive_failures)
         self.log.info(
             "Backing off: %d consecutive failures, sleeping %ds.",
             self._consecutive_failures,
@@ -124,11 +150,23 @@ class Poller:
         if not self.id_map:
             self.log.warning("No valid Twitch channels configured; skipping poll.")
             return
+        self._poll_started = time.monotonic()
         try:
-            streams = await self._fetch_live_streams()
+            streams = await asyncio.wait_for(
+                self._fetch_live_streams(), timeout=POLL_TIMEOUT_SECONDS)
+            took = time.monotonic() - self._poll_started
+            if took > SLOW_POLL_SECONDS:
+                self.log.warning("Helix poll was slow: %.0fs.", took)
             await self._handle_streams(streams)
             self._consecutive_failures = 0
             self.state["last_poll_at"] = time.time()
+        except TimeoutError:
+            self._consecutive_failures += 1
+            self.log.error(
+                "Helix poll timed out after %ds (failure #%d); will retry.",
+                POLL_TIMEOUT_SECONDS,
+                self._consecutive_failures,
+            )
         except aiohttp.ClientError:
             self._consecutive_failures += 1
             self.log.exception(
@@ -142,7 +180,38 @@ class Poller:
                 self._consecutive_failures,
             )
         finally:
+            self._poll_started = None
             self.save_state(self.state)
+
+    def _check_stall(self) -> None:
+        """Log the moment polling goes stale enough for /health to fail, and
+        the moment it recovers, with what the poller was doing at the time."""
+        last = self.state.get("last_poll_at")
+        if not last:
+            return  # Not polled yet; /health has its own startup grace period.
+        age = time.time() - last
+        if age >= self.stale_seconds:
+            if not self._stall_logged:
+                in_flight = (f"a poll has been in flight {time.monotonic() - self._poll_started:.0f}s"
+                             if self._poll_started is not None else "no poll in flight")
+                self.log.warning(
+                    "Polling stale: last good poll %.0fs ago (/health now 503); "
+                    "%s; %d consecutive failures; next sleep %ds.",
+                    age, in_flight, self._consecutive_failures,
+                    self._sleep_for(self._consecutive_failures),
+                )
+                self._stall_logged = True
+        elif self._stall_logged:
+            self.log.info("Polling recovered: last good poll %.0fs ago.", age)
+            self._stall_logged = False
+
+    async def _stall_watch(self) -> None:
+        while True:
+            await asyncio.sleep(STALL_CHECK_SECONDS)
+            try:
+                self._check_stall()
+            except Exception:
+                self.log.exception("Stall check failed.")
 
     async def _fetch_live_streams(self) -> list[dict[str, Any]]:
         broadcaster_ids = list(self.id_map.keys())

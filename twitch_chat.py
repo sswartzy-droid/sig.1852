@@ -109,6 +109,18 @@ class _Bot(commands.Bot):
         # liveness check is built on -- see TwitchChat.connected.
         self._parent._note_irc_line(data)
 
+    async def event_command_error(self, ctx: commands.Context, error: Exception) -> None:
+        """Unknown commands are normal here, not errors.
+
+        coda-pipeline sits in the same chat and owns `!ads` among others. Without
+        this handler twitchio logs a full traceback for every one of them, and
+        that noise is exactly what buries a real command failure.
+        """
+        if isinstance(error, commands.CommandNotFound):
+            return
+        self.log.error("command error in %s: %s",
+                       getattr(ctx, "command", None), error, exc_info=True)
+
     async def event_error(self, error: Exception, data: str | None = None) -> None:
         self.log.error("twitchio error: %s", error, exc_info=True)
 
@@ -419,7 +431,24 @@ class TwitchChat:
             return
         live_now: list[str] = self.state.get("live_now", [])
         if self._channel not in live_now:
-            return
+            # `live_now` is filled by the polling loop, and a stream stop/start
+            # empties it until the next poll. Messages arriving in that window
+            # look offline when they are not -- which cost CoslinStar their
+            # shoutout on 2026-08-01. Confirm with Helix before giving up.
+            #
+            # Bounded on purpose: the caller adds to _seen_users before calling,
+            # so this runs at most once per listed user per session, not per
+            # message. Failing closed on an API error is deliberate -- a missed
+            # shoutout beats a shoutout fired into an offline channel.
+            try:
+                if await self._own_stream() is None:
+                    return
+            except Exception:
+                self.log.exception(
+                    "Helix live-check failed during auto-shout for %s; skipping.", username
+                )
+                return
+            self.log.info("live_now was stale; Helix confirms live.")
         self.log.info("Auto-shouting %s.", username)
         await self._cmd_shoutout(username)
 

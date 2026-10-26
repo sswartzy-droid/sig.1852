@@ -380,6 +380,7 @@ async def main() -> None:
                 save_state=save_state,
                 interval_seconds=int(polling_config.get("interval_seconds", 90)),
                 bus_publish=bus_publish,
+                stale_seconds=HEALTH_STALE_SECONDS,
             )
             tasks.append(asyncio.create_task(poller.run()))
 
