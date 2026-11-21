@@ -67,6 +67,7 @@ class AutoShout(unittest.TestCase):
         c.config = type("C", (), {"raw": {"twitch_chat": {"auto_shout": {
             "enabled": cfg_enabled, "channels": ["coslinstar"]}}}})()
         c.shouted = []
+        c._seen_users = {"coslinstar"}   # the caller adds the user before calling
 
         async def fake_shout(u):
             c.shouted.append(u)
@@ -106,6 +107,22 @@ class AutoShout(unittest.TestCase):
         c = self._chat(["reburve"], None)
         run(c._maybe_auto_shout("randomviewer"))
         self.assertEqual(c.shouted, [])
+
+    def test_offline_message_does_not_use_up_the_shoutout(self):
+        """2026-11-21: a pre-live message must leave the user retryable."""
+        c = self._chat([], None)
+        run(c._maybe_auto_shout("coslinstar"))
+        self.assertNotIn("coslinstar", c._seen_users)
+
+    def test_helix_failure_leaves_user_retryable(self):
+        c = self._chat([], RuntimeError("helix 500"))
+        run(c._maybe_auto_shout("coslinstar"))
+        self.assertNotIn("coslinstar", c._seen_users)
+
+    def test_live_shout_keeps_user_seen(self):
+        c = self._chat(["reburve"], None)
+        run(c._maybe_auto_shout("coslinstar"))
+        self.assertIn("coslinstar", c._seen_users, "one shoutout per session, not per message")
 
     def test_disabled_config_short_circuits(self):
         c = self._chat(["reburve"], None, cfg_enabled=False)
