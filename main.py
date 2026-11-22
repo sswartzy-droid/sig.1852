@@ -7,9 +7,10 @@ import os
 import signal
 import tempfile
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from aiohttp import web
@@ -24,8 +25,9 @@ STATE_PATH = STATE_DIR / "state.json"
 
 log = logging.getLogger("main")
 
-# GMT-6 (Central Standard Time)
-CST = timezone(timedelta(hours=-6))
+# US Central, daylight saving included. A fixed GMT-6 read an hour behind
+# from March to November.
+CENTRAL = ZoneInfo("America/Chicago")
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -129,9 +131,9 @@ def _format_duration(seconds: float) -> str:
 
 
 def _format_timestamp(ts: float) -> str:
-    """Format Unix timestamp as ISO 8601 in CST (GMT-6)."""
-    dt = datetime.fromtimestamp(ts, tz=CST)
-    return dt.strftime("%Y-%m-%d %H:%M:%S CST")
+    """Format Unix timestamp in US Central time, labelled CST or CDT."""
+    dt = datetime.fromtimestamp(ts, tz=CENTRAL)
+    return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 async def _start_health_server(

@@ -440,13 +440,20 @@ class TwitchChat:
             # so this runs at most once per listed user per session, not per
             # message. Failing closed on an API error is deliberate -- a missed
             # shoutout beats a shoutout fired into an offline channel.
+            #
+            # 2026-11-21: when the answer is "not live" (or unknown), forget the
+            # user so their NEXT message retries. Before this, chatting before
+            # the stream went live used up the once-per-session shoutout.
             try:
                 if await self._own_stream() is None:
+                    self._seen_users.discard(username)
                     return
             except Exception:
                 self.log.exception(
-                    "Helix live-check failed during auto-shout for %s; skipping.", username
+                    "Helix live-check failed during auto-shout for %s; will retry on their next message.",
+                    username,
                 )
+                self._seen_users.discard(username)
                 return
             self.log.info("live_now was stale; Helix confirms live.")
         self.log.info("Auto-shouting %s.", username)
@@ -744,7 +751,12 @@ class TwitchChat:
             elif not is_live and was_live:
                 went_live_at = None
                 next_post_at = None
-                self.log.info("Stream went offline; chat quote schedule reset.")
+                # 2026-11-21: "once per session" needs the session to end somewhere.
+                # Nothing ever cleared this set, so it lived as long as the
+                # container: CoslinStar, seen on an earlier stream, got no
+                # auto-shout on 11-21 (container up since 10-28).
+                self._seen_users.clear()
+                self.log.info("Stream went offline; chat quote schedule and auto-shout list reset.")
 
             was_live = is_live
 
